@@ -16,6 +16,10 @@
       {
         "command": "project-broccoli.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "project-broccoli.startDebugger",
+        "title": "Start Debugger"
       }
     ]
   },
