@@ -45,6 +45,30 @@
         "command": "project-broccoli.testBreakpoints",
         "title": "Add Breakpoints"
       }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "project-broccoli",
+          "title": "Project Broccoli",
+          "icon": "resources/brocolli-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "project-broccoli": [
+        {
+          "id": "project-broccoli-view",
+          "name": "Welcome",
+          "icon": "resources/brocolli-icon.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "project-broccoli-view",
+        "contents": "[Start Dabro-cess](command:project-broccoli.startDebugger)"
+      }
     ]
   },
   "scripts": {
