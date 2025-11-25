@@ -14,12 +14,32 @@
   "contributes": {
     "commands": [
       {
-        "command": "project-broccoli.helloWorld",
-        "title": "Hello World"
-      },
-      {
         "command": "project-broccoli.startDebugger",
         "title": "Start Debugger"
+      },
+      {
+        "command": "project-broccoli.continueExecution",
+        "title": "Continue Execution"
+      },
+      {
+        "command": "project-broccoli.stepOver",
+        "title": "Step Over"
+      },
+      {
+        "command": "project-broccoli.stepInto",
+        "title": "Step Into"
+      },
+      {
+        "command": "project-broccoli.stepOut",
+        "title": "Step Out"
+      },
+      {
+        "command": "project-broccoli.restartDebugger",
+        "title": "Restart Debugger"
+      },
+      {
+        "command": "project-broccoli.stopDebugger",
+        "title": "Stop Debugger"
       }
     ]
   },
