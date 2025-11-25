@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 
+// TODO: check for more edge cases
+
 export async function startDebugger() {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
@@ -9,7 +11,7 @@ export async function startDebugger() {
 
     const configs = vscode.workspace.getConfiguration('launch', workspaceFolder.uri);
     const configurations = configs.get<any[]>('configurations', []);
-    
+
     if (configurations.length === 0) {
         vscode.window.showErrorMessage('No debug configurations found in launch.json');
         return;
@@ -23,10 +25,10 @@ export async function startDebugger() {
             configurations.map(c => c.name),
             { placeHolder: 'Select a debug configuration, Go to the Debug tab and select create launch.json file' }
         );
-        if (!selected) {return;}
+        if (!selected) { return; }
         configToLaunch = configurations.find(c => c.name === selected);
     }
-    
+
     await vscode.debug.startDebugging(workspaceFolder, configToLaunch);
 }
 
@@ -69,7 +71,7 @@ export function stepOut() {
     }
 }
 
-export function restartDebugger() {
+export function restartDebugger(): void {
     if (vscode.debug.activeDebugSession) {
         vscode.commands.executeCommand('workbench.action.debug.restart');
     } else {
@@ -77,11 +79,38 @@ export function restartDebugger() {
     }
 }
 
-export function stopDebugger() {
+export function stopDebugger(): void {
     if (vscode.debug.activeDebugSession) {
         vscode.debug.stopDebugging(vscode.debug.activeDebugSession);
     } else {
         vscode.window.showInformationMessage('No active debug session to stop');
     }
 }
+export function addBreakpoints(file: string, line: number): void {
+    const uri = vscode.Uri.file(file);
+    const position = new vscode.Position(line - 1, 0);
+    const location = new vscode.Location(uri, position);
+    // NOTE: Can also be a function breakpoint -> the name of the function to which this breakpoint is attached.
+    // Also a Breakpoint has an attribute conditino to make it a conditiional breakpoint.
+    //  */ From Docs:
+    //  * An optional expression for conditional breakpoints.
+    //  */
+    // readonly condition?: string | undefined;
+    const breakpoint = new vscode.SourceBreakpoint(location, true);
 
+    vscode.debug.addBreakpoints([breakpoint]);
+}
+
+// TODO: Make other add breakpoints functions (function, conditional, etc.)
+
+export async function testBreakpoints(): Promise<void> {
+    const activeEditor = vscode.window.activeTextEditor;
+    if (!activeEditor) {
+        vscode.window.showErrorMessage('No active file open');
+        return;
+    }
+    
+    const filePath = activeEditor.document.uri.fsPath;
+    const currentLine = activeEditor.selection.active.line + 1;
+    addBreakpoints(filePath, currentLine);
+}

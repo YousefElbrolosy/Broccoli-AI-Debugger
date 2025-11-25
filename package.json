@@ -40,6 +40,10 @@
       {
         "command": "project-broccoli.stopDebugger",
         "title": "Stop Debugger"
+      },
+      {
+        "command": "project-broccoli.testBreakpoints",
+        "title": "Add Breakpoints"
       }
     ]
   },
