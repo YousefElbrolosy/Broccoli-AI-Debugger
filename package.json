@@ -46,10 +46,14 @@
         "title": "Inspect Variables"
       },
       {
-        "command": "project-broccoli.testBreakpoints",
+        "command": "project-broccoli.testAddingBreakpoints",
         "title": "Add Breakpoints"
       }
       ,
+      {
+        "command": "project-broccoli.testRemovingBreakpoints",
+        "title": "Remove Breakpoints"
+      },
       {
         "command": "project-broccoli.startDummyAgent",
         "title": "Start Dummy Agent (test)"

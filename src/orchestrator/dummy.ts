@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { startDebugger, continueExecution, stepOver, stepInto, stepOut, restartDebugger, stopDebugger, addBreakpoints, testBreakpoints } from '../command-interface';
+import { startDebugger, continueExecution, stepOver, stepInto, stepOut, restartDebugger, stopDebugger, addBreakpoints, testAddingBreakpoints } from '../command-interface';
 
 function sleep(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));

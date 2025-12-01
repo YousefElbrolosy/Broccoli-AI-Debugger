@@ -1,7 +1,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-import { startDebugger, continueExecution, stepOver, stepInto, stepOut, restartDebugger, stopDebugger, inspectVariables, testBreakpoints } from './command-interface';
+import { startDebugger, continueExecution, stepOver, stepInto, stepOut, restartDebugger, stopDebugger, inspectVariables, testAddingBreakpoints, testRemovingBreakpoints } from './command-interface';
 import startDummyAgent from './orchestrator/dummy';
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -77,11 +77,17 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(inspectVariablesCommand);
 
-	const testBreakpointsCommand = vscode.commands.registerCommand('project-broccoli.testBreakpoints', () => {
-		testBreakpoints();
+	const testAddingBreakpointsCommand = vscode.commands.registerCommand('project-broccoli.testAddingBreakpoints', () => {
+		testAddingBreakpoints();
 	});
 
-	context.subscriptions.push(testBreakpointsCommand);
+	context.subscriptions.push(testAddingBreakpointsCommand);
+
+	const testRemovingBreakpointsCommand = vscode.commands.registerCommand('project-broccoli.testRemovingBreakpoints', () => {
+		testRemovingBreakpoints();
+	});
+
+	context.subscriptions.push(testRemovingBreakpointsCommand);
 
 	const startDummyAgentCommand = vscode.commands.registerCommand('project-broccoli.startDummyAgent', async () => {
 		await startDummyAgent();

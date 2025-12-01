@@ -101,9 +101,26 @@ export function addBreakpoints(file: string, line: number): void {
     vscode.debug.addBreakpoints([breakpoint]);
 }
 
+export function removeBreakpoints(file: string, line: number): void {
+    const uri = vscode.Uri.file(file);
+        const breakpoints = vscode.debug.breakpoints;
+        const breakpointToRemove = breakpoints.find(bp => 
+            bp instanceof vscode.SourceBreakpoint &&
+            bp.location.uri.fsPath === uri.fsPath &&
+            bp.location.range.start.line === line - 1
+        );
+        
+        if (breakpointToRemove) {
+            vscode.debug.removeBreakpoints([breakpointToRemove]);
+        }
+        else {
+            vscode.window.showInformationMessage(`No breakpoint found at ${file}:${line} to remove.`);
+        }
+    }
+
 // TODO: Make other add breakpoints functions (function, conditional, etc.)
 
-export async function testBreakpoints(): Promise<void> {
+export async function testAddingBreakpoints(): Promise<void> {
     const activeEditor = vscode.window.activeTextEditor;
     if (!activeEditor) {
         vscode.window.showErrorMessage('No active file open');
@@ -113,6 +130,18 @@ export async function testBreakpoints(): Promise<void> {
     const filePath = activeEditor.document.uri.fsPath;
     const currentLine = activeEditor.selection.active.line + 1;
     addBreakpoints(filePath, currentLine);
+}
+
+export async function testRemovingBreakpoints(): Promise<void> {
+    const activeEditor = vscode.window.activeTextEditor;
+    if (!activeEditor) {
+        vscode.window.showErrorMessage('No active file open');
+        return;
+    }
+    
+    const filePath = activeEditor.document.uri.fsPath;
+    const currentLine = activeEditor.selection.active.line + 1;
+    removeBreakpoints(filePath, currentLine);
 }
 
 export async function getDebugVariablesFromStackFrame() {
