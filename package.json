@@ -42,6 +42,10 @@
         "title": "Stop Debugger"
       },
       {
+        "command": "project-broccoli.inspectVariables",
+        "title": "Inspect Variables"
+      },
+      {
         "command": "project-broccoli.testBreakpoints",
         "title": "Add Breakpoints"
       },

@@ -114,3 +114,81 @@ export async function testBreakpoints(): Promise<void> {
     const currentLine = activeEditor.selection.active.line + 1;
     addBreakpoints(filePath, currentLine);
 }
+
+export async function getDebugVariablesFromStackFrame() {
+    /**
+     * Gets the variables from the current debug session and the active StackItem.
+    */
+    const session = vscode.debug.activeDebugSession;
+    
+    if (!session) {
+        vscode.window.showInformationMessage('No active debug session');
+        return null;
+    }
+
+    const activeStack = vscode.debug.activeStackItem;
+
+    
+
+    if (!activeStack) {
+        vscode.window.showWarningMessage('No active stack frame selected');
+        return null;
+    }
+
+    // Validate we're working with the correct session
+    if (activeStack.session.id !== session.id) {
+        vscode.window.showErrorMessage(
+            `Session mismatch: active session changed during operation`
+        );
+        return null;
+    }
+
+    try {
+        if (!('frameId' in activeStack)) {
+            vscode.window.showWarningMessage('Active stack item is not a stack frame');
+            return null;
+        }
+
+        const frameId = activeStack.frameId;
+
+        console.log("frameId", frameId);
+
+        const scopes = await session.customRequest('scopes', { frameId });
+        
+        const variables: any[] = [];
+        
+        // Get variables for each scope
+        for (const scope of scopes.scopes) {
+            const scopeVars = await session.customRequest('variables', {
+                variablesReference: scope.variablesReference
+            });
+            
+            variables.push({
+                scope: scope.name,
+                variables: scopeVars.variables
+            });
+        }
+        
+        return variables;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`Failed to retrieve debug variables: ${message}`);
+        console.error('Debug variables error:', error);
+        return null;
+    }
+}
+
+export async function inspectVariables() {
+    const variables = await getDebugVariablesFromStackFrame();
+    vscode.window.showInformationMessage('Variables fetched. Check output for details.');
+    console.log('Debug Variables:', variables);
+    if (variables) {
+        // Log to console or display as needed
+        console.log(JSON.stringify(variables, null, 2));
+        
+        // Or show in output channel
+        const outputChannel = vscode.window.createOutputChannel('Debug Variables');
+        outputChannel.show();
+        outputChannel.appendLine(JSON.stringify(variables, null, 2));
+    }
+}

@@ -1,7 +1,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-import { startDebugger, continueExecution, stepOver, stepInto, stepOut, restartDebugger, stopDebugger, testBreakpoints } from './command-interface';
+import { startDebugger, continueExecution, stepOver, stepInto, stepOut, restartDebugger, stopDebugger, inspectVariables, testBreakpoints } from './command-interface';
 import startDummyAgent from './orchestrator/dummy';
 import { applyChanges, showPreviewAndConfirm, showPreviewDiff } from './orchestrator/diff';
 // This method is called when your extension is activated
@@ -11,6 +11,19 @@ export function activate(context: vscode.ExtensionContext) {
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	console.log('Congratulations, your extension "project-broccoli" is now active!');
+
+	let pendingInspection: 'stepOver' | null = null;
+
+	const stackItemListener = vscode.debug.onDidChangeActiveStackItem(async (stackItem) => {
+		if (pendingInspection && stackItem && 'frameId' in stackItem) {
+			console.log(`Debugger stopped after ${pendingInspection}, inspecting variables...`);
+			pendingInspection = null;
+
+			await inspectVariables();
+		}
+	});
+
+	context.subscriptions.push(stackItemListener);
 
 	// The command has been defined in the package.json file
 	// Now provide the implementation of the command with registerCommand
@@ -27,8 +40,9 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	context.subscriptions.push(continueExecutionCommand);
-	
-	const stepOverCommand = vscode.commands.registerCommand('project-broccoli.stepOver', () => {
+
+	const stepOverCommand = vscode.commands.registerCommand('project-broccoli.stepOver', async () => {
+		pendingInspection = 'stepOver';
 		stepOver();
 	});
 
@@ -39,7 +53,7 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	context.subscriptions.push(stepIntoCommand);
-	
+
 	const stepOutCommand = vscode.commands.registerCommand('project-broccoli.stepOut', () => {
 		stepOut();
 	});
@@ -51,12 +65,18 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	context.subscriptions.push(restartDebugCommand);
-	
+
 	const stopDebugCommand = vscode.commands.registerCommand('project-broccoli.stopDebugger', () => {
 		stopDebugger();
 	});
-	
+
 	context.subscriptions.push(stopDebugCommand);
+
+	const inspectVariablesCommand = vscode.commands.registerCommand('project-broccoli.inspectVariables', async () => {
+		inspectVariables();
+	});
+
+	context.subscriptions.push(inspectVariablesCommand);
 
 	const testBreakpointsCommand = vscode.commands.registerCommand('project-broccoli.testBreakpoints', () => {
 		testBreakpoints();
@@ -85,4 +105,4 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 // This method is called when your extension is deactivated
-export function deactivate() {}
+export function deactivate() { }
