@@ -17,37 +17,6 @@ export async function applyChanges(filePath: string, changes: { range: vscode.Ra
 }
 
 /**
- * Show a preview diff of proposed edits without saving them to disk.
- * - `filePath`: path of the original file on disk
- * - `changes`: array of { range, newText } where `range` is a `vscode.Range` in the original document
- */
-export async function showPreviewDiff(filePath: string, changes: { range: vscode.Range; newText: string }[]): Promise<void> {
-    try {
-        const document = await vscode.workspace.openTextDocument(filePath);
-        const originalText = document.getText();
-
-        const edits = [...changes];
-        edits.sort((a, b) => document.offsetAt(b.range.start) - document.offsetAt(a.range.start));
-
-        let modifiedText = originalText;
-        for (const ch of edits) {
-            const start = document.offsetAt(ch.range.start);
-            const end = document.offsetAt(ch.range.end);
-            modifiedText = modifiedText.slice(0, start) + ch.newText + modifiedText.slice(end);
-        }
-
-        // Create an untitled in-memory document containing the modified text
-        const previewDoc = await vscode.workspace.openTextDocument({ content: modifiedText, language: document.languageId });
-
-        // Use the built-in diff command to show original vs preview (no file changes saved)
-        await vscode.commands.executeCommand('vscode.diff', document.uri, previewDoc.uri, `${filePath} ↔ (preview edits)`);
-        
-    } catch (err) {
-        vscode.window.showErrorMessage(`Failed to show preview diff: ${err}`);
-    }
-}
-
-/**
  * Show a preview diff and prompt the user to accept or reject the proposed edits.
  * If accepted, the edits are applied to the original file and saved.
  */
@@ -75,6 +44,7 @@ export async function showPreviewAndConfirm(filePath: string, changes: { range: 
             vscode.window.showInformationMessage('Changes applied.');
         } else {
             vscode.window.showInformationMessage('Changes not applied.');
+            await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
         }
     } catch (err) {
         vscode.window.showErrorMessage(`Failed to preview/confirm changes: ${err}`);

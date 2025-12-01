@@ -3,7 +3,7 @@
 import * as vscode from 'vscode';
 import { startDebugger, continueExecution, stepOver, stepInto, stepOut, restartDebugger, stopDebugger, inspectVariables, testAddingBreakpoints, testRemovingBreakpoints } from './command-interface';
 import startDummyAgent from './orchestrator/dummy';
-import { applyChanges, showPreviewAndConfirm, showPreviewDiff } from './orchestrator/diff';
+import { showPreviewAndConfirm } from './orchestrator/diff';
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
@@ -100,7 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
 		const activeEditor = vscode.window.activeTextEditor;
 		if (activeEditor) {
 			const filePath = activeEditor.document.uri.fsPath;
-			await showPreviewAndConfirm(filePath, [{range: new vscode.Range(new vscode.Position(0, 0), new vscode.Position(1, 0)), newText: '# Modified line example'}, 
+			await showPreviewAndConfirm(filePath, [{range: new vscode.Range(new vscode.Position(0, 0), new vscode.Position(1, 0)), newText: '# Modified line example'},
 				{range: new vscode.Range(new vscode.Position(2, 0), new vscode.Position(2, 5)), newText: '# Changed'}]);
 		} else {
 			vscode.window.showInformationMessage('No active editor to show diff for');
