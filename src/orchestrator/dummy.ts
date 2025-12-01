@@ -14,7 +14,13 @@ export async function startDummyAgent(): Promise<void> {
         await sleep(1200);
 
         // Try adding a breakpoint at the current cursor location (if an editor is open)
-        await testBreakpoints();
+        const activeEditor = vscode.window.activeTextEditor;
+        if (!activeEditor) {
+            vscode.window.showErrorMessage('No active file open');
+            return;
+        }
+        const filePath = activeEditor.document.uri.fsPath;
+        await addBreakpoints(filePath, 3);
         await sleep(600);
 
         // Continue, then step over, step into, step out in sequence to exercise the commands
@@ -32,10 +38,10 @@ export async function startDummyAgent(): Promise<void> {
 
         // Restart then stop to exercise those functions as well
         restartDebugger();
-        await sleep(800);
+        await sleep(3000);
 
         stopDebugger();
-        await sleep(300);
+        await sleep(3000);
 
         vscode.window.showInformationMessage('Dummy agent: test sequence completed');
     } catch (err) {
