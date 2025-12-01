@@ -3,6 +3,7 @@
 import * as vscode from 'vscode';
 import { startDebugger, continueExecution, stepOver, stepInto, stepOut, restartDebugger, stopDebugger, testBreakpoints } from './command-interface';
 import startDummyAgent from './orchestrator/dummy';
+import { applyChanges, showPreviewAndConfirm, showPreviewDiff } from './orchestrator/diff';
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
@@ -68,6 +69,19 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	context.subscriptions.push(startDummyAgentCommand);
+
+	const testDiff = vscode.commands.registerCommand('project-broccoli.showDiff', async () => {
+		const activeEditor = vscode.window.activeTextEditor;
+		if (activeEditor) {
+			const filePath = activeEditor.document.uri.fsPath;
+			await showPreviewAndConfirm(filePath, [{range: new vscode.Range(new vscode.Position(0, 0), new vscode.Position(1, 0)), newText: '# Modified line example'}, 
+				{range: new vscode.Range(new vscode.Position(2, 0), new vscode.Position(2, 5)), newText: '# Changed'}]);
+		} else {
+			vscode.window.showInformationMessage('No active editor to show diff for');
+		}
+	});
+
+	context.subscriptions.push(testDiff);
 }
 
 // This method is called when your extension is deactivated

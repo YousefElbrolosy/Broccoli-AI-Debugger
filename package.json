@@ -44,11 +44,14 @@
       {
         "command": "project-broccoli.testBreakpoints",
         "title": "Add Breakpoints"
-      }
-      ,
+      },
       {
         "command": "project-broccoli.startDummyAgent",
         "title": "Start Dummy Agent (test)"
+      },
+      {
+        "command": "project-broccoli.showDiff",
+        "title": "Show Diff"
       }
     ],
     "viewsContainers": {
@@ -94,5 +97,8 @@
     "eslint": "^9.39.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.3"
+  },
+  "dependencies": {
+    "yarn": "^1.22.22"
   }
 }
