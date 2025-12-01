@@ -14,8 +14,76 @@
   "contributes": {
     "commands": [
       {
-        "command": "project-broccoli.helloWorld",
-        "title": "Hello World"
+        "command": "project-broccoli.startDebugger",
+        "title": "Start Debugger"
+      },
+      {
+        "command": "project-broccoli.continueExecution",
+        "title": "Continue Execution"
+      },
+      {
+        "command": "project-broccoli.stepOver",
+        "title": "Step Over"
+      },
+      {
+        "command": "project-broccoli.stepInto",
+        "title": "Step Into"
+      },
+      {
+        "command": "project-broccoli.stepOut",
+        "title": "Step Out"
+      },
+      {
+        "command": "project-broccoli.restartDebugger",
+        "title": "Restart Debugger"
+      },
+      {
+        "command": "project-broccoli.stopDebugger",
+        "title": "Stop Debugger"
+      },
+      {
+        "command": "project-broccoli.inspectVariables",
+        "title": "Inspect Variables"
+      },
+      {
+        "command": "project-broccoli.testAddingBreakpoints",
+        "title": "Add Breakpoints"
+      },
+      {
+        "command": "project-broccoli.testRemovingBreakpoints",
+        "title": "Remove Breakpoints"
+      },
+      {
+        "command": "project-broccoli.startDummyAgent",
+        "title": "Start Dummy Agent (test)"
+      },
+      {
+        "command": "project-broccoli.showDiff",
+        "title": "Show Diff"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "project-broccoli",
+          "title": "Project Broccoli",
+          "icon": "resources/brocolli-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "project-broccoli": [
+        {
+          "id": "project-broccoli-view",
+          "name": "Welcome",
+          "icon": "resources/brocolli-icon.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "project-broccoli-view",
+        "contents": "[Start Dabro-cess](command:project-broccoli.startDebugger)"
       }
     ]
   },
@@ -28,13 +96,17 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.106.1",
+    "@types/estree": "^1.0.8",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.46.3",
+    "@types/vscode": "^1.106.1",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "eslint": "^9.39.1",
     "typescript": "^5.9.3",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "typescript-eslint": "^8.46.3"
+  },
+  "dependencies": {
+    "yarn": "^1.22.22"
   }
 }
