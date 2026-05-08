@@ -15,51 +15,63 @@
     "commands": [
       {
         "command": "project-broccoli.startDebugger",
-        "title": "Start Debugger"
+        "title": "Broccoli: Start Debugger"
       },
       {
         "command": "project-broccoli.continueExecution",
-        "title": "Continue Execution"
+        "title": "Broccoli: Continue Execution"
       },
       {
         "command": "project-broccoli.stepOver",
-        "title": "Step Over"
+        "title": "Broccoli: Step Over"
       },
       {
         "command": "project-broccoli.stepInto",
-        "title": "Step Into"
+        "title": "Broccoli: Step Into"
       },
       {
         "command": "project-broccoli.stepOut",
-        "title": "Step Out"
+        "title": "Broccoli: Step Out"
       },
       {
         "command": "project-broccoli.restartDebugger",
-        "title": "Restart Debugger"
+        "title": "Broccoli: Restart Debugger"
       },
       {
         "command": "project-broccoli.stopDebugger",
-        "title": "Stop Debugger"
+        "title": "Broccoli: Stop Debugger"
       },
       {
         "command": "project-broccoli.inspectVariables",
-        "title": "Inspect Variables"
+        "title": "Broccoli: Inspect Variables"
       },
       {
-        "command": "project-broccoli.testAddingBreakpoints",
-        "title": "Add Breakpoints"
+        "command": "project-broccoli.addBreakpointAtCursor",
+        "title": "Broccoli: Add Breakpoint at Cursor"
       },
       {
-        "command": "project-broccoli.testRemovingBreakpoints",
-        "title": "Remove Breakpoints"
+        "command": "project-broccoli.removeBreakpointAtCursor",
+        "title": "Broccoli: Remove Breakpoint at Cursor"
       },
       {
-        "command": "project-broccoli.startDummyAgent",
-        "title": "Start Dummy Agent (test)"
+        "command": "project-broccoli.listBreakpoints",
+        "title": "Broccoli: List Breakpoints"
       },
       {
-        "command": "project-broccoli.showDiff",
-        "title": "Show Diff"
+        "command": "project-broccoli.startDebugAgent",
+        "title": "Broccoli: Start AI Debug Agent"
+      },
+      {
+        "command": "project-broccoli.cancelAgent",
+        "title": "Broccoli: Cancel Running Agent"
+      },
+      {
+        "command": "project-broccoli.configureProvider",
+        "title": "Broccoli: Configure LLM Provider"
+      },
+      {
+        "command": "project-broccoli.clearProviderConfig",
+        "title": "Broccoli: Clear LLM Provider Config"
       }
     ],
     "viewsContainers": {
@@ -75,17 +87,12 @@
       "project-broccoli": [
         {
           "id": "project-broccoli-view",
-          "name": "Welcome",
+          "name": "Project Broccoli",
+          "type": "webview",
           "icon": "resources/brocolli-icon.svg"
         }
       ]
-    },
-    "viewsWelcome": [
-      {
-        "view": "project-broccoli-view",
-        "contents": "[Start Dabro-cess](command:project-broccoli.startDebugger)"
-      }
-    ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -107,6 +114,7 @@
     "typescript-eslint": "^8.46.3"
   },
   "dependencies": {
-    "yarn": "^1.22.22"
+    "@anthropic-ai/sdk": "^0.95.1",
+    "openai": "^6.37.0"
   }
 }

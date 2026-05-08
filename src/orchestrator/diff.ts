@@ -20,7 +20,7 @@ export async function applyChanges(filePath: string, changes: { range: vscode.Ra
  * Show a preview diff and prompt the user to accept or reject the proposed edits.
  * If accepted, the edits are applied to the original file and saved.
  */
-export async function showPreviewAndConfirm(filePath: string, changes: { range: vscode.Range; newText: string }[]): Promise<void> {
+export async function showPreviewAndConfirm(filePath: string, changes: { range: vscode.Range; newText: string }[]): Promise<boolean> {
     try {
         const document = await vscode.workspace.openTextDocument(filePath);
         const originalText = document.getText();
@@ -38,15 +38,26 @@ export async function showPreviewAndConfirm(filePath: string, changes: { range: 
         const previewDoc = await vscode.workspace.openTextDocument({ content: modifiedText, language: document.languageId });
         await vscode.commands.executeCommand('vscode.diff', document.uri, previewDoc.uri, `${filePath} ↔ (preview edits)`);
 
-        const choice = await vscode.window.showInformationMessage('Apply proposed changes?', 'Apply', 'Reject');
+        const choice = await vscode.window.showInformationMessage(
+            'Apply proposed changes?',
+            {
+                modal: true,
+                detail: `${filePath}\n${changes.length} edit${changes.length === 1 ? '' : 's'}. Review the diff in the editor before deciding.`
+            },
+            'Apply',
+            'Reject'
+        );
         if (choice === 'Apply') {
             await applyChanges(filePath, changes);
             vscode.window.showInformationMessage('Changes applied.');
         } else {
+            // Treat dismissal (Esc / X) the same as Reject.
             vscode.window.showInformationMessage('Changes not applied.');
             await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
         }
+        return choice === 'Apply';
     } catch (err) {
         vscode.window.showErrorMessage(`Failed to preview/confirm changes: ${err}`);
+        return false;
     }
 }

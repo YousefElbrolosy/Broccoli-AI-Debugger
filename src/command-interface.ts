@@ -1,20 +1,17 @@
 import * as vscode from 'vscode';
+import { NoActiveDebugSessionError } from './session/DebugSessionController';
 
-// TODO: check for more edge cases
-
-export async function startDebugger() {
+export async function startDebugger(): Promise<void> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
-        vscode.window.showErrorMessage('No workspace folder open');
-        return;
+        throw new Error('No workspace folder open');
     }
 
     const configs = vscode.workspace.getConfiguration('launch', workspaceFolder.uri);
     const configurations = configs.get<any[]>('configurations', []);
 
     if (configurations.length === 0) {
-        vscode.window.showErrorMessage('No debug configurations found in launch.json');
-        return;
+        throw new Error('No debug configurations found in launch.json');
     }
 
     let configToLaunch;
@@ -23,201 +20,185 @@ export async function startDebugger() {
     } else {
         const selected = await vscode.window.showQuickPick(
             configurations.map(c => c.name),
-            { placeHolder: 'Select a debug configuration, Go to the Debug tab and select create launch.json file' }
+            { placeHolder: 'Select a debug configuration' }
         );
-        if (!selected) { return; }
+        if (!selected) {
+            throw new Error('No debug configuration selected');
+        }
         configToLaunch = configurations.find(c => c.name === selected);
     }
 
-    await vscode.debug.startDebugging(workspaceFolder, configToLaunch);
-}
-
-export function continueExecution() {
-    if (vscode.debug.activeDebugSession) {
-        vscode.commands.executeCommand('workbench.action.debug.continue');
-    } else {
-        vscode.window.showInformationMessage('No active debug session to continue');
+    const ok = await vscode.debug.startDebugging(workspaceFolder, configToLaunch);
+    if (!ok) {
+        throw new Error('vscode.debug.startDebugging returned false');
     }
 }
 
-export function stepOver() {
-    if (vscode.debug.activeDebugSession) {
-        vscode.commands.executeCommand('workbench.action.debug.stepOver');
-    } else {
-        vscode.window.showInformationMessage('No active debug session to step over');
+function requireSession(): vscode.DebugSession {
+    const s = vscode.debug.activeDebugSession;
+    if (!s) {
+        throw new NoActiveDebugSessionError();
     }
+    return s;
 }
 
-export function stepInto() {
-    if (vscode.debug.activeDebugSession) {
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        const configs = vscode.workspace.getConfiguration('launch', workspaceFolder?.uri);
-        const configurations = configs.get<any[]>('configurations', []);
-        const justMyCode = configurations[0]?.justMyCode ?? true;
-        if (justMyCode === true || justMyCode === undefined) {
-            vscode.window.showWarningMessage('Warning: "Just My Code" is set to true - possibly by default. Step Into would not be able to stepInto external code. If you want to step into external code, please set "justMyCode": false in your launch.json configuration.');
-        }
-        vscode.commands.executeCommand('workbench.action.debug.stepInto');
-    } else {
-        vscode.window.showInformationMessage('No active debug session to step into');
-    }
+export async function continueExecution(): Promise<void> {
+    requireSession();
+    await vscode.commands.executeCommand('workbench.action.debug.continue');
 }
 
-export function stepOut() {
-    if (vscode.debug.activeDebugSession) {
-        vscode.commands.executeCommand('workbench.action.debug.stepOut');
-    } else {
-        vscode.window.showInformationMessage('No active debug session to step out');
-    }
+export async function stepOver(): Promise<void> {
+    requireSession();
+    await vscode.commands.executeCommand('workbench.action.debug.stepOver');
 }
 
-export function restartDebugger(): void {
-    if (vscode.debug.activeDebugSession) {
-        vscode.commands.executeCommand('workbench.action.debug.restart');
-    } else {
-        vscode.window.showInformationMessage('No active debug session to restart');
-    }
+export async function stepInto(): Promise<void> {
+    requireSession();
+    await vscode.commands.executeCommand('workbench.action.debug.stepInto');
+}
+
+export async function stepOut(): Promise<void> {
+    requireSession();
+    await vscode.commands.executeCommand('workbench.action.debug.stepOut');
+}
+
+export async function restartDebugger(): Promise<void> {
+    requireSession();
+    await vscode.commands.executeCommand('workbench.action.debug.restart');
 }
 
 export function stopDebugger(): void {
-    if (vscode.debug.activeDebugSession) {
-        vscode.debug.stopDebugging(vscode.debug.activeDebugSession);
-    } else {
-        vscode.window.showInformationMessage('No active debug session to stop');
+    const s = vscode.debug.activeDebugSession;
+    if (!s) {
+        throw new NoActiveDebugSessionError();
     }
+    vscode.debug.stopDebugging(s);
 }
-export function addBreakpoints(file: string, line: number): void {
+
+export async function addBreakpoint(file: string, line: number, condition?: string): Promise<void> {
     const uri = vscode.Uri.file(file);
     const position = new vscode.Position(line - 1, 0);
     const location = new vscode.Location(uri, position);
-    // NOTE: Can also be a function breakpoint -> the name of the function to which this breakpoint is attached.
-    // Also a Breakpoint has an attribute conditino to make it a conditiional breakpoint.
-    //  */ From Docs:
-    //  * An optional expression for conditional breakpoints.
-    //  */
-    // readonly condition?: string | undefined;
-    const breakpoint = new vscode.SourceBreakpoint(location, true);
-
+    const breakpoint = new vscode.SourceBreakpoint(location, true, condition);
     vscode.debug.addBreakpoints([breakpoint]);
 }
 
-export function removeBreakpoints(file: string, line: number): void {
+export async function removeBreakpoint(file: string, line: number): Promise<boolean> {
     const uri = vscode.Uri.file(file);
-        const breakpoints = vscode.debug.breakpoints;
-        const breakpointToRemove = breakpoints.find(bp => 
+    const target = vscode.debug.breakpoints.find(
+        bp =>
             bp instanceof vscode.SourceBreakpoint &&
             bp.location.uri.fsPath === uri.fsPath &&
             bp.location.range.start.line === line - 1
-        );
-        
-        if (breakpointToRemove) {
-            vscode.debug.removeBreakpoints([breakpointToRemove]);
-        }
-        else {
-            vscode.window.showInformationMessage(`No breakpoint found at ${file}:${line} to remove.`);
-        }
+    );
+    if (!target) {
+        return false;
     }
-
-// TODO: Make other add breakpoints functions (function, conditional, etc.)
-
-export async function testAddingBreakpoints(): Promise<void> {
-    const activeEditor = vscode.window.activeTextEditor;
-    if (!activeEditor) {
-        vscode.window.showErrorMessage('No active file open');
-        return;
-    }
-    
-    const filePath = activeEditor.document.uri.fsPath;
-    const currentLine = activeEditor.selection.active.line + 1;
-    addBreakpoints(filePath, currentLine);
+    vscode.debug.removeBreakpoints([target]);
+    return true;
 }
 
-export async function testRemovingBreakpoints(): Promise<void> {
-    const activeEditor = vscode.window.activeTextEditor;
-    if (!activeEditor) {
-        vscode.window.showErrorMessage('No active file open');
-        return;
-    }
-    
-    const filePath = activeEditor.document.uri.fsPath;
-    const currentLine = activeEditor.selection.active.line + 1;
-    removeBreakpoints(filePath, currentLine);
+export function listBreakpoints(): Array<{
+    file: string;
+    line: number;
+    enabled: boolean;
+    condition?: string;
+}> {
+    return vscode.debug.breakpoints
+        .filter((bp): bp is vscode.SourceBreakpoint => bp instanceof vscode.SourceBreakpoint)
+        .map(bp => ({
+            file: bp.location.uri.fsPath,
+            line: bp.location.range.start.line + 1,
+            enabled: bp.enabled,
+            condition: bp.condition
+        }));
 }
 
-export async function getDebugVariablesFromStackFrame() {
-    /**
-     * Gets the variables from the current debug session and the active StackItem.
-    */
-    const session = vscode.debug.activeDebugSession;
-    
-    if (!session) {
-        vscode.window.showInformationMessage('No active debug session');
-        return null;
-    }
-
-    const activeStack = vscode.debug.activeStackItem;
-
-    
-
-    if (!activeStack) {
-        vscode.window.showWarningMessage('No active stack frame selected');
-        return null;
-    }
-
-    // Validate we're working with the correct session
-    if (activeStack.session.id !== session.id) {
-        vscode.window.showErrorMessage(
-            `Session mismatch: active session changed during operation`
-        );
-        return null;
-    }
-
-    try {
-        if (!('frameId' in activeStack)) {
-            vscode.window.showWarningMessage('Active stack item is not a stack frame');
-            return null;
-        }
-
-        const frameId = activeStack.frameId;
-
-        console.log("frameId", frameId);
-
-        const scopes = await session.customRequest('scopes', { frameId });
-        
-        const variables: any[] = [];
-        
-        // Get variables for each scope
-        for (const scope of scopes.scopes) {
-            const scopeVars = await session.customRequest('variables', {
-                variablesReference: scope.variablesReference
-            });
-            
-            variables.push({
-                scope: scope.name,
-                variables: scopeVars.variables
-            });
-        }
-        
-        return variables;
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(`Failed to retrieve debug variables: ${message}`);
-        console.error('Debug variables error:', error);
-        return null;
-    }
+export interface VariableSummary {
+    name: string;
+    value: string;
+    type?: string;
+    variables_reference: number;
 }
 
-export async function inspectVariables() {
-    const variables = await getDebugVariablesFromStackFrame();
-    vscode.window.showInformationMessage('Variables fetched. Check output for details.');
-    console.log('Debug Variables:', variables);
-    if (variables) {
-        // Log to console or display as needed
-        console.log(JSON.stringify(variables, null, 2));
-        
-        // Or show in output channel
-        const outputChannel = vscode.window.createOutputChannel('Debug Variables');
-        outputChannel.show();
-        outputChannel.appendLine(JSON.stringify(variables, null, 2));
+export interface ScopeSummary {
+    scope: string;
+    variables: VariableSummary[];
+    truncated?: boolean;
+}
+
+const MAX_VARIABLES_PER_SCOPE = 50;
+
+export async function getStackTrace(): Promise<
+    Array<{ id: number; name: string; source?: string; line: number }>
+> {
+    const session = requireSession();
+    const threadId = inferThreadId();
+    if (threadId === undefined) {
+        return [];
     }
+    const result = await session.customRequest('stackTrace', { threadId, levels: 20 });
+    return (result?.stackFrames ?? []).map((f: any) => ({
+        id: f.id,
+        name: f.name,
+        source: f.source?.path,
+        line: f.line
+    }));
+}
+
+export async function getVariablesForFrame(frameId?: number): Promise<ScopeSummary[]> {
+    const session = requireSession();
+    const fid = frameId ?? topFrameIdOrThrow();
+    const scopesResp = await session.customRequest('scopes', { frameId: fid });
+    const scopes = scopesResp?.scopes ?? [];
+    const out: ScopeSummary[] = [];
+    for (const scope of scopes) {
+        const vars = await session.customRequest('variables', {
+            variablesReference: scope.variablesReference
+        });
+        const all: any[] = vars?.variables ?? [];
+        const truncated = all.length > MAX_VARIABLES_PER_SCOPE;
+        out.push({
+            scope: scope.name,
+            variables: all.slice(0, MAX_VARIABLES_PER_SCOPE).map(summarize),
+            truncated
+        });
+    }
+    return out;
+}
+
+export async function expandVariable(variablesReference: number): Promise<VariableSummary[]> {
+    const session = requireSession();
+    const vars = await session.customRequest('variables', { variablesReference });
+    const all: any[] = vars?.variables ?? [];
+    return all.slice(0, MAX_VARIABLES_PER_SCOPE).map(summarize);
+}
+
+function summarize(v: any): VariableSummary {
+    return {
+        name: v.name,
+        value: truncate(String(v.value ?? ''), 500),
+        type: v.type,
+        variables_reference: v.variablesReference ?? 0
+    };
+}
+
+function truncate(s: string, max: number): string {
+    return s.length > max ? `${s.slice(0, max)}…(${s.length - max} more chars)` : s;
+}
+
+function inferThreadId(): number | undefined {
+    const item = vscode.debug.activeStackItem;
+    if (!item) {
+        return undefined;
+    }
+    return item.threadId;
+}
+
+function topFrameIdOrThrow(): number {
+    const item = vscode.debug.activeStackItem;
+    if (!item || !('frameId' in item)) {
+        throw new Error('Debugger is not paused on a stack frame');
+    }
+    return (item as vscode.DebugStackFrame).frameId;
 }
