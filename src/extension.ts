@@ -13,23 +13,41 @@ import {
     stopDebugger
 } from './command-interface';
 import { DebugSessionController } from './session/DebugSessionController';
-import { startDebugAgent } from './orchestrator/debug-agent';
+import { cancelActiveAgent, startDebugAgent } from './orchestrator/debug-agent';
+import { registerDiffPreviewProvider } from './orchestrator/diff';
 import { clearProviderConfig, configureProvider } from './agent/secrets';
 import { AgentState } from './agent/AgentState';
+import { DebugTools } from './agent/DebugTools';
+import { McpDebugServer } from './mcp/server';
 import { SidebarProvider } from './gui/SidebarProvider';
 
 let controller: DebugSessionController | undefined;
 let agentState: AgentState | undefined;
+let mcpServer: McpDebugServer | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     controller = new DebugSessionController();
     agentState = new AgentState();
     context.subscriptions.push(controller, agentState);
 
-    const sidebar = new SidebarProvider(context, agentState);
+    // One DebugTools shared by the built-in agent and the MCP server — its
+    // internal mutex serializes debugger operations across both surfaces.
+    const debugTools = new DebugTools(controller);
+    const mcpOutput = vscode.window.createOutputChannel('Broccoli MCP');
+    mcpServer = new McpDebugServer(debugTools, agentState, mcpOutput);
+    context.subscriptions.push(mcpServer, mcpOutput);
+
+    const sidebar = new SidebarProvider(context, agentState, text => {
+        void startDebugAgent(context, controller!, agentState!, debugTools, text).catch(e => {
+            vscode.window.showErrorMessage(
+                `project-broccoli: ${e instanceof Error ? e.message : String(e)}`
+            );
+        });
+    });
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewId, sidebar)
     );
+    registerDiffPreviewProvider(context);
 
     const cmd = (id: string, fn: (...a: any[]) => any) =>
         context.subscriptions.push(
@@ -82,10 +100,40 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Agent commands.
     cmd('project-broccoli.startDebugAgent', () =>
-        startDebugAgent(context, controller!, agentState!)
+        startDebugAgent(context, controller!, agentState!, debugTools)
     );
+    cmd('project-broccoli.cancelAgent', () => {
+        if (!cancelActiveAgent()) {
+            vscode.window.showInformationMessage('No Broccoli agent is running.');
+        }
+    });
     cmd('project-broccoli.configureProvider', () => configureProvider(context));
     cmd('project-broccoli.clearProviderConfig', () => clearProviderConfig(context));
+
+    // MCP server commands.
+    cmd('project-broccoli.startMcpServer', async () => {
+        await mcpServer!.start(mcpOptions());
+        vscode.window.showInformationMessage(
+            `Broccoli MCP server listening on http://127.0.0.1:${mcpOptions().port}/mcp`
+        );
+    });
+    cmd('project-broccoli.stopMcpServer', () => mcpServer!.stop());
+
+    if (vscode.workspace.getConfiguration('broccoli.mcp').get<boolean>('autoStart', false)) {
+        mcpServer.start(mcpOptions()).catch(e => {
+            vscode.window.showErrorMessage(
+                `Broccoli MCP server failed to start: ${e instanceof Error ? e.message : String(e)}`
+            );
+        });
+    }
+}
+
+function mcpOptions() {
+    const cfg = vscode.workspace.getConfiguration('broccoli.mcp');
+    return {
+        port: cfg.get<number>('port', 4923),
+        authToken: cfg.get<string>('authToken', '')
+    };
 }
 
 export function deactivate() {
@@ -93,4 +141,6 @@ export function deactivate() {
     controller = undefined;
     agentState?.dispose();
     agentState = undefined;
+    mcpServer?.dispose();
+    mcpServer = undefined;
 }

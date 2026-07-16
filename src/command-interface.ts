@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { NoActiveDebugSessionError } from './session/DebugSessionController';
 
-export async function startDebugger(): Promise<void> {
+export async function startDebugger(configurationName?: string): Promise<void> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
         throw new Error('No workspace folder open');
@@ -15,7 +15,16 @@ export async function startDebugger(): Promise<void> {
     }
 
     let configToLaunch;
-    if (configurations.length === 1) {
+    if (configurationName) {
+        configToLaunch = configurations.find(c => c.name === configurationName);
+        if (!configToLaunch) {
+            throw new Error(
+                `No launch configuration named "${configurationName}". Available: ${configurations
+                    .map(c => c.name)
+                    .join(', ')}`
+            );
+        }
+    } else if (configurations.length === 1) {
         configToLaunch = configurations[0];
     } else {
         const selected = await vscode.window.showQuickPick(
@@ -34,14 +43,50 @@ export async function startDebugger(): Promise<void> {
     }
 }
 
-function requireSession(): vscode.DebugSession {
-    const s = vscode.debug.activeDebugSession;
+/** Names of the launch configurations available in the first workspace folder. */
+export function listLaunchConfigurations(): string[] {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) { return []; }
+    return vscode.workspace
+        .getConfiguration('launch', workspaceFolder.uri)
+        .get<any[]>('configurations', [])
+        .map(c => String(c.name));
+}
+
+function requireSession(preferred?: vscode.DebugSession): vscode.DebugSession {
+    const s = preferred ?? vscode.debug.activeDebugSession;
     if (!s) {
         throw new NoActiveDebugSessionError();
     }
     return s;
 }
 
+const DAP_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * customRequest with a hard timeout. Some adapters (e.g. js-debug's parent
+ * session) log "Unknown request" and never respond — an unresolved promise
+ * here would wedge the tool-dispatch queue forever.
+ */
+function dapRequest(
+    session: vscode.DebugSession,
+    command: string,
+    args?: unknown
+): Promise<any> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+            () => reject(new Error(`DAP ${command} request timed out after ${DAP_REQUEST_TIMEOUT_MS}ms`)),
+            DAP_REQUEST_TIMEOUT_MS
+        );
+        Promise.resolve(session.customRequest(command, args)).then(
+            v => { clearTimeout(timer); resolve(v); },
+            e => { clearTimeout(timer); reject(e); }
+        );
+    });
+}
+
+// UI-driven wrappers: act on VS Code's focused session/thread. Used by the
+// manual palette commands where "whatever the user is looking at" is correct.
 export async function continueExecution(): Promise<void> {
     requireSession();
     await vscode.commands.executeCommand('workbench.action.debug.continue');
@@ -62,17 +107,39 @@ export async function stepOut(): Promise<void> {
     await vscode.commands.executeCommand('workbench.action.debug.stepOut');
 }
 
+// DAP-driven variants: target an explicit threadId (and session) so the agent
+// controls the thread it observed stopping, not whichever has UI focus.
+export async function continueDap(threadId?: number, session?: vscode.DebugSession): Promise<void> {
+    const s = requireSession(session);
+    await dapRequest(s, 'continue', { threadId: await resolveThreadId(s, threadId) });
+}
+
+export async function stepOverDap(threadId?: number, session?: vscode.DebugSession): Promise<void> {
+    const s = requireSession(session);
+    await dapRequest(s, 'next', { threadId: await resolveThreadId(s, threadId) });
+}
+
+export async function stepIntoDap(threadId?: number, session?: vscode.DebugSession): Promise<void> {
+    const s = requireSession(session);
+    await dapRequest(s, 'stepIn', { threadId: await resolveThreadId(s, threadId) });
+}
+
+export async function stepOutDap(threadId?: number, session?: vscode.DebugSession): Promise<void> {
+    const s = requireSession(session);
+    await dapRequest(s, 'stepOut', { threadId: await resolveThreadId(s, threadId) });
+}
+
 export async function restartDebugger(): Promise<void> {
     requireSession();
     await vscode.commands.executeCommand('workbench.action.debug.restart');
 }
 
-export function stopDebugger(): void {
+export async function stopDebugger(): Promise<void> {
     const s = vscode.debug.activeDebugSession;
     if (!s) {
         throw new NoActiveDebugSessionError();
     }
-    vscode.debug.stopDebugging(s);
+    await vscode.debug.stopDebugging(s);
 }
 
 export async function addBreakpoint(file: string, line: number, condition?: string): Promise<void> {
@@ -129,15 +196,20 @@ export interface ScopeSummary {
 
 const MAX_VARIABLES_PER_SCOPE = 50;
 
-export async function getStackTrace(): Promise<
-    Array<{ id: number; name: string; source?: string; line: number }>
-> {
-    const session = requireSession();
-    const threadId = inferThreadId();
-    if (threadId === undefined) {
-        return [];
-    }
-    const result = await session.customRequest('stackTrace', { threadId, levels: 20 });
+export interface StackFrameSummary {
+    id: number;
+    name: string;
+    source?: string;
+    line: number;
+}
+
+export async function getStackTrace(
+    threadId?: number,
+    session?: vscode.DebugSession
+): Promise<StackFrameSummary[]> {
+    const s = requireSession(session);
+    const tid = await resolveThreadId(s, threadId);
+    const result = await dapRequest(s, 'stackTrace', { threadId: tid, levels: 20 });
     return (result?.stackFrames ?? []).map((f: any) => ({
         id: f.id,
         name: f.name,
@@ -146,14 +218,30 @@ export async function getStackTrace(): Promise<
     }));
 }
 
-export async function getVariablesForFrame(frameId?: number): Promise<ScopeSummary[]> {
-    const session = requireSession();
-    const fid = frameId ?? topFrameIdOrThrow();
-    const scopesResp = await session.customRequest('scopes', { frameId: fid });
+export async function getVariablesForFrame(
+    frameId?: number,
+    threadId?: number,
+    session?: vscode.DebugSession
+): Promise<ScopeSummary[]> {
+    const s = requireSession(session);
+    let fid = frameId;
+    if (fid === undefined) {
+        const item = vscode.debug.activeStackItem;
+        if (item && 'frameId' in item) {
+            fid = (item as vscode.DebugStackFrame).frameId;
+        } else {
+            const frames = await getStackTrace(threadId, s);
+            if (frames.length === 0) {
+                throw new Error('Debugger is not paused on a stack frame');
+            }
+            fid = frames[0].id;
+        }
+    }
+    const scopesResp = await dapRequest(s, 'scopes', { frameId: fid });
     const scopes = scopesResp?.scopes ?? [];
     const out: ScopeSummary[] = [];
     for (const scope of scopes) {
-        const vars = await session.customRequest('variables', {
+        const vars = await dapRequest(s, 'variables', {
             variablesReference: scope.variablesReference
         });
         const all: any[] = vars?.variables ?? [];
@@ -167,9 +255,12 @@ export async function getVariablesForFrame(frameId?: number): Promise<ScopeSumma
     return out;
 }
 
-export async function expandVariable(variablesReference: number): Promise<VariableSummary[]> {
-    const session = requireSession();
-    const vars = await session.customRequest('variables', { variablesReference });
+export async function expandVariable(
+    variablesReference: number,
+    session?: vscode.DebugSession
+): Promise<VariableSummary[]> {
+    const s = requireSession(session);
+    const vars = await dapRequest(s, 'variables', { variablesReference });
     const all: any[] = vars?.variables ?? [];
     return all.slice(0, MAX_VARIABLES_PER_SCOPE).map(summarize);
 }
@@ -187,18 +278,27 @@ function truncate(s: string, max: number): string {
     return s.length > max ? `${s.slice(0, max)}…(${s.length - max} more chars)` : s;
 }
 
-function inferThreadId(): number | undefined {
-    const item = vscode.debug.activeStackItem;
-    if (!item) {
-        return undefined;
+/**
+ * Resolve the thread to operate on: explicit id (from a DAP stopped event) →
+ * VS Code's focused stack item → first thread reported by the adapter.
+ * Never depends solely on `activeStackItem`, which VS Code populates
+ * asynchronously after a stop and may still be empty when we need it.
+ */
+async function resolveThreadId(
+    session: vscode.DebugSession,
+    preferred?: number
+): Promise<number> {
+    if (typeof preferred === 'number') {
+        return preferred;
     }
-    return item.threadId;
-}
-
-function topFrameIdOrThrow(): number {
     const item = vscode.debug.activeStackItem;
-    if (!item || !('frameId' in item)) {
-        throw new Error('Debugger is not paused on a stack frame');
+    if (item) {
+        return item.threadId;
     }
-    return (item as vscode.DebugStackFrame).frameId;
+    const resp = await dapRequest(session, 'threads');
+    const first = resp?.threads?.[0]?.id;
+    if (typeof first === 'number') {
+        return first;
+    }
+    throw new Error('Cannot determine a debug thread (no threads reported by the adapter)');
 }

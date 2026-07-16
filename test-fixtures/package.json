@@ -1,0 +1,6 @@
+{
+  "name": "broccoli-test-fixtures",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Buggy sample programs used by Project Broccoli's integration tests and manual agent runs."
+}

@@ -72,7 +72,7 @@ export type CompatPreset = keyof typeof OPENAI_COMPAT_PRESETS;
 
 export const ANTHROPIC_PRESET = {
     displayName: 'anthropic',
-    defaultModel: 'claude-haiku-4-5-20251001',
+    defaultModel: 'claude-haiku-4-5',
     keyHint: 'sk-ant-...'
 };
 

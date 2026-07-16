@@ -1,14 +1,19 @@
 import * as vscode from 'vscode';
 import { DebugTools } from './DebugTools';
-import { TOOLS } from './schemas';
+import { AGENT_TOOLS, TOOLS } from './schemas';
 import { SYSTEM_PROMPT } from './systemPrompt';
 import type { DebugSessionController } from '../session/DebugSessionController';
 import { createClient } from './llm';
 import type { LLMClient, NormalizedMessage, NormalizedToolCall, ProviderConfig } from './llm';
 import type { AgentState } from './AgentState';
+import { compactHistory, estimateChars } from './history';
 
 const DEFAULT_MAX_TURNS = 25;
+const DEFAULT_TOKEN_BUDGET = 200_000;
 const MAX_TOOL_RESULT_CHARS = 8000;
+/** Only compact above this estimated prompt size — compaction invalidates the provider's message cache once. */
+const COMPACT_TRIGGER_CHARS = 60_000;
+const KEEP_RECENT_TOOL_RESULTS = 6;
 
 export interface AgentRunOptions {
     config: ProviderConfig;
@@ -18,6 +23,8 @@ export interface AgentRunOptions {
     cancel: vscode.CancellationToken;
     maxTurns?: number;
     state?: AgentState;
+    /** Shared tool dispatcher (also used by the MCP server); created ad hoc when absent. */
+    debugTools?: DebugTools;
 }
 
 export async function runAgent(opts: AgentRunOptions): Promise<{
@@ -26,12 +33,15 @@ export async function runAgent(opts: AgentRunOptions): Promise<{
     turns: number;
 }> {
     const { config, controller, initialUserMessage, output, cancel, state } = opts;
-    const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
+    const settings = vscode.workspace.getConfiguration('broccoli.agent');
+    const maxTurns = opts.maxTurns ?? settings.get<number>('maxTurns', DEFAULT_MAX_TURNS);
+    const tokenBudget = settings.get<number>('tokenBudget', DEFAULT_TOKEN_BUDGET);
 
     const client: LLMClient = createClient(config);
-    const tools = new DebugTools(controller);
+    const tools = opts.debugTools ?? new DebugTools(controller);
 
-    log(output, `Using ${client.label}`);
+    log(output, `Using ${client.label} (maxTurns=${maxTurns}, tokenBudget=${tokenBudget || 'unlimited'})`);
+    state?.resetUsage(tokenBudget > 0 ? tokenBudget : 0);
 
     const messages: NormalizedMessage[] = [
         { role: 'user', content: initialUserMessage }
@@ -42,21 +52,45 @@ export async function runAgent(opts: AgentRunOptions): Promise<{
     let finished = false;
     let nudgesUsed = 0;
     const MAX_NUDGES = 2;
+    let totalTokens = 0;
+    // Stop-controller: precedence cancel > budget > turns. When budget or the
+    // turn limit is about to bite, inject a single wrap-up nudge and allow
+    // exactly one more turn.
+    let wrapUpInjected = false;
+    let turnsSinceWrapUp = 0;
 
     while (turns < maxTurns) {
         if (cancel.isCancellationRequested) {
             log(output, 'Cancelled by user.');
             break;
         }
+        if (wrapUpInjected && turnsSinceWrapUp >= 1) {
+            log(output, 'Hard stop: wrap-up turn used without finish.');
+            break;
+        }
         turns++;
+        if (wrapUpInjected) { turnsSinceWrapUp++; }
         log(output, `--- Turn ${turns}/${maxTurns} ---`);
         state?.set({ kind: 'running', turn: turns, maxTurns });
+
+        if (estimateChars(messages) > COMPACT_TRIGGER_CHARS) {
+            const compacted = compactHistory(messages, {
+                keepRecentToolResults: KEEP_RECENT_TOOL_RESULTS
+            });
+            if (compacted.pruned > 0) {
+                messages.splice(0, messages.length, ...compacted.messages);
+                log(
+                    output,
+                    `Compacted history: stubbed ${compacted.pruned} old tool result(s), ~${compacted.savedChars} chars saved.`
+                );
+            }
+        }
 
         let resp;
         try {
             resp = await client.step({
                 system: SYSTEM_PROMPT,
-                tools: TOOLS,
+                tools: AGENT_TOOLS,
                 messages,
                 signal: abortSignalFrom(cancel)
             });
@@ -64,6 +98,16 @@ export async function runAgent(opts: AgentRunOptions): Promise<{
             if (cancel.isCancellationRequested) { break; }
             log(output, `API error: ${e instanceof Error ? e.message : String(e)}`);
             throw e;
+        }
+
+        if (resp.usage) {
+            const u = resp.usage;
+            totalTokens += u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheWriteTokens;
+            state?.addUsage({ ...u, turns });
+            log(
+                output,
+                `usage: in=${u.inputTokens} out=${u.outputTokens} cacheRead=${u.cacheReadTokens} cacheWrite=${u.cacheWriteTokens} (run total ${totalTokens})`
+            );
         }
 
         if (resp.text && resp.text.trim()) {
@@ -126,7 +170,12 @@ export async function runAgent(opts: AgentRunOptions): Promise<{
                     turn: turns
                 });
             }
+            const toolSeq = state?.startTool(turns, call.name, summarizeArgs(call.input));
+            const startedAt = Date.now();
             const result = await tools.dispatch(call.name, call.input);
+            if (toolSeq !== undefined) {
+                state?.finishTool(toolSeq, result.isError ? 'error' : 'ok', Date.now() - startedAt);
+            }
             const truncated = truncate(result.content, MAX_TOOL_RESULT_CHARS);
             log(
                 output,
@@ -151,6 +200,22 @@ export async function runAgent(opts: AgentRunOptions): Promise<{
             log(output, `Agent called finish: ${summary ?? '(no summary)'}`);
             break;
         }
+
+        if (!wrapUpInjected) {
+            const budgetHit = tokenBudget > 0 && totalTokens >= tokenBudget;
+            const turnsNearlyOut = turns >= maxTurns - 1;
+            if (budgetHit || turnsNearlyOut) {
+                wrapUpInjected = true;
+                const reason = budgetHit
+                    ? `token budget (${tokenBudget} tokens)`
+                    : `turn limit (${maxTurns} turns)`;
+                log(output, `Injecting wrap-up nudge — reached the ${reason}.`);
+                messages.push({
+                    role: 'user',
+                    content: `You have reached the ${reason} for this run. Call finish NOW with your best summary: what you observed, your current hypothesis, and what you would try next. Do not call any other tool.`
+                });
+            }
+        }
     }
 
     if (turns >= maxTurns && !finished) {
@@ -160,13 +225,38 @@ export async function runAgent(opts: AgentRunOptions): Promise<{
 }
 
 /**
- * Try to recover a tool call from plain assistant text. Detects the two payload
- * shapes the model is most likely to dump verbatim: propose_code_fix and finish.
+ * Try to recover a tool call from plain assistant text. Handles two families:
+ *  1. An envelope naming any known tool: {name|tool: "...", input|arguments|parameters: {...}}
+ *     (or the arguments flattened alongside the name).
+ *  2. Bare payloads for the two tools models most often dump verbatim:
+ *     propose_code_fix ({file, changes}) and finish ({summary}).
+ * Exported for unit tests.
  */
-function recoverToolCallFromText(text: string): NormalizedToolCall | undefined {
+export function recoverToolCallFromText(text: string): NormalizedToolCall | undefined {
     const obj = extractFirstJsonObject(text);
     if (!obj || typeof obj !== 'object') { return undefined; }
     const o = obj as Record<string, any>;
+
+    const knownNames = new Set(TOOLS.map(t => t.name));
+    const envelopeName =
+        typeof o.name === 'string' && knownNames.has(o.name)
+            ? o.name
+            : typeof o.tool === 'string' && knownNames.has(o.tool)
+            ? o.tool
+            : undefined;
+    if (envelopeName) {
+        const nested = o.input ?? o.arguments ?? o.parameters ?? o.args;
+        let input: any;
+        if (nested && typeof nested === 'object') {
+            input = nested;
+        } else {
+            // Arguments flattened next to the tool name.
+            input = { ...o };
+            delete input.name;
+            delete input.tool;
+        }
+        return { id: `recovered_${Date.now()}`, name: envelopeName, input };
+    }
 
     if (typeof o.file === 'string' && Array.isArray(o.changes)) {
         return {
@@ -189,8 +279,8 @@ function recoverToolCallFromText(text: string): NormalizedToolCall | undefined {
     return undefined;
 }
 
-/** Heuristic for "the model intended to propose a fix but emitted prose/diff instead". */
-function looksLikeFixIntent(text: string): boolean {
+/** Heuristic for "the model intended to propose a fix but emitted prose/diff instead". Exported for unit tests. */
+export function looksLikeFixIntent(text: string): boolean {
     if (/```diff/i.test(text)) { return true; }
     if (/^\s*---\s+\S/m.test(text) && /^\s*\+\+\+\s+\S/m.test(text)) { return true; }
     if (/^@@.+@@/m.test(text)) { return true; }
@@ -226,6 +316,19 @@ function extractFirstJsonObject(text: string): unknown {
         }
     }
     return undefined;
+}
+
+/** Compact one-line rendering of tool arguments for the sidebar timeline. */
+function summarizeArgs(input: unknown): string {
+    if (input === null || input === undefined) { return ''; }
+    let s: string;
+    try {
+        s = JSON.stringify(input);
+    } catch {
+        s = String(input);
+    }
+    if (s === '{}') { return ''; }
+    return s.length > 60 ? `${s.slice(0, 57)}…` : s;
 }
 
 function abortSignalFrom(token: vscode.CancellationToken): AbortSignal {

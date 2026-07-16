@@ -1,71 +1,70 @@
-# project-broccoli README
+# 🥦 Broccoli — AI Debugger for VS Code
 
-This is the README for your extension "project-broccoli". After writing up a brief description, we recommend including the following sections.
+Broccoli turns "the agent reads a stack trace and guesses" into **"the agent drives the real debugger"**: it sets breakpoints, steps, inspects live variables over the Debug Adapter Protocol, and proposes a fix you approve in a diff — never applied silently.
 
-## Features
+Two ways to use it:
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+1. **Built-in agent** — bring your own API key (Anthropic, OpenAI, Groq, DeepSeek, Together, xAI, Ollama, or any OpenAI-compatible endpoint) and debug from the sidebar.
+2. **MCP server** — expose the same debugger tools over a localhost Model Context Protocol endpoint so external agents like **Claude Code** or **Cursor** can debug through your editor.
 
-For example if there is an image subfolder under your extension project workspace:
+## Quick start (built-in agent)
 
-\!\[feature X\]\(images/feature-x.png\)
+1. Open the **Broccoli** icon in the activity bar.
+2. Click **configure** and pick a provider + model (the key is stored in VS Code's SecretStorage, never on disk).
+3. Make sure your workspace has a `launch.json` debug configuration.
+4. Describe the bug in the panel and hit **Debug it**.
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+You'll see the agent's activity live: every tool call as a trace line, its reasoning as cards, and token usage at the bottom. Any code change opens a diff with a modal **Apply / Reject** — nothing is written without you.
 
-## Requirements
+## MCP server (for Claude Code, Cursor, …)
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+Run **"Broccoli: Start MCP Server"** from the command palette (or set `broccoli.mcp.autoStart`). Then register it with your agent:
 
-## Extension Settings
+```bash
+# Claude Code
+claude mcp add --transport http broccoli http://127.0.0.1:4923/mcp
+```
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+```jsonc
+// Cursor (~/.cursor/mcp.json)
+{
+  "mcpServers": {
+    "broccoli": { "url": "http://127.0.0.1:4923/mcp" }
+  }
+}
+```
 
-For example:
+The agent gets 16 tools: session lifecycle (`start_debug_session` by launch-config name, restart, stop), breakpoints (incl. conditional), stepping (`continue_execution`, `step_over/into/out` — each blocks until the next stop and returns the stop reason, top frame and a locals preview), inspection (`get_stack_trace`, `inspect_variables`, `expand_variable`), `read_source`, `get_debugger_state` for cheap orientation, and `propose_code_fix` — which still shows **you** the modal diff.
 
-This extension contributes the following settings:
+Settings:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+| Setting | Default | Purpose |
+|---|---|---|
+| `broccoli.mcp.port` | `4923` | Localhost port (server binds `127.0.0.1` only) |
+| `broccoli.mcp.authToken` | *(empty)* | Optional `Authorization: Bearer` token |
+| `broccoli.mcp.autoStart` | `false` | Start with the extension |
+| `broccoli.agent.maxTurns` | `25` | Turn cap per built-in agent run |
+| `broccoli.agent.tokenBudget` | `200000` | Token cap per run (0 = off) |
 
-## Known Issues
+## Safety model
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+These are properties of the implementation, not the prompt:
 
-## Release Notes
+- **No expression evaluation** — the agent cannot run code in the debuggee.
+- **No silent edits** — every change goes through a modal diff; line numbers are validated against the real file first; if the file changed while you reviewed, the apply is auto-rejected.
+- **Workspace-scoped reads** — `read_source` and `propose_code_fix` refuse paths outside open workspace folders.
+- **Validated input** — every tool call (internal or MCP) is checked against its JSON Schema before touching the debugger.
+- **Bounded runs** — turn cap, token budget, cancellation, and per-request timeouts.
+- **Localhost-only MCP** — bound to `127.0.0.1`, optional bearer auth, DNS-rebinding protection.
 
-Users appreciate release notes as you update your extension.
+## Development
 
-### 1.0.0
+```bash
+npm install
+npm run compile     # typecheck + esbuild bundle
+npm test            # unit + integration (real js-debug sessions against test-fixtures/)
+```
 
-Initial release of ...
+`test-fixtures/` contains small buggy Node programs (off-by-one, wrong accumulator, async race, uncaught throw) used by the integration tests — and handy for trying the agent yourself: open `test-fixtures/` as a workspace and ask Broccoli why `sum` is `NaN`.
 
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+See [architecture.md](architecture.md) for the full design.

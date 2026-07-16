@@ -1,6 +1,11 @@
 # Project Broccoli — Architecture
 
-A VS Code extension that gives LLM agents structured debugging tools (breakpoints, stepping, variable inspection, source reading) via the Debug Adapter Protocol. The agent runs *inside* the extension host; the LLM is provider-pluggable.
+A VS Code extension that gives LLM agents structured debugging tools (breakpoints, stepping, variable inspection, source reading) via the Debug Adapter Protocol. Two agent surfaces share one tool layer:
+
+- a **built-in agent loop** (provider-pluggable LLM, user's own API key), and
+- a **Streamable-HTTP MCP server** on localhost, so external MCP clients (Claude Code, Cursor, …) can drive the same debugger.
+
+Both run *inside* the extension host — the only place VS Code's debug API exists.
 
 ---
 
@@ -53,9 +58,14 @@ The agent only ever sees the **Debug tools** surface; the LLM provider is swappe
 | `agent/llm/openaiCompat.ts` | `OpenAICompatClient` — Chat Completions + `tool_calls` shape. Used for OpenAI, Groq, DeepSeek, Together, xAI, Ollama, and any custom OpenAI-compatible URL. | One client, many providers. Adds: `sanitizeSchema` (strips `default`/`examples`/`$id` keywords Groq's validator rejects), `sanitizeCall` (recovers malformed `function.name = "tool({…})"` patterns from weaker models), `callWithRetry` (one retry on 400 with backoff; logs `failed_generation`). |
 | `agent/llm/index.ts` | `createClient(config)` factory, provider presets, `detectProviderFromKey`. | Provider knowledge in one place; `Agent.ts` stays clean. |
 | `agent/secrets.ts` | Provider-config wizard (multi-step QuickPick → InputBox), JSON-encoded into `vscode.SecretStorage`. | Secrets never touch source or workspace files. Wizard supports key validation per provider (e.g. `sk-ant-` for Anthropic, free-form for Ollama). |
-| `agent/AnthropicAgent.ts` | The agent loop: build messages, call `LLMClient.step`, dispatch tool calls, append `tool_result`s, repeat. Caps at `MAX_TURNS=25`. | Provider-agnostic despite the legacy filename. Handles cancellation via `CancellationToken` → `AbortSignal`; recovers from text-as-tool-call (synthesizes `propose_code_fix` / `finish` from JSON-in-text) and text-as-fix (nudges the model with a corrective user message, capped at 2 nudges). |
-| `orchestrator/debug-agent.ts` | The user-facing entry point. Asks for the bug description and active-file context, hands them to `runAgent`, ensures the debug session is stopped in `finally`. | Lifecycle ownership in one place. Failures during the run never leave a dangling debug session. |
-| `orchestrator/diff.ts` | `showPreviewAndConfirm`: opens a `vscode.diff` view, then shows a **modal** information dialog. Returns a boolean to the agent. | Modal (not toast) — the dialog stays open until the user decides; the agent loop blocks on the await. The boolean lets the model see whether its proposal was accepted. |
+| `agent/agentLoop.ts` | The agent loop: build messages, call `LLMClient.step`, dispatch tool calls, append `tool_result`s, repeat. Caps at configurable `maxTurns` (default 25) and a token budget (default 200k). | Provider-agnostic. Handles cancellation via `CancellationToken` → `AbortSignal`; recovers text-as-tool-call for *any* known tool (envelope or bare payloads); nudges text-as-fix (cap 2); tracks per-turn token usage; compacts old tool results above ~60k chars; injects a single wrap-up nudge when budget or turns run out (precedence: cancel > budget > turns). |
+| `agent/validate.ts` | Hand-rolled JSON-Schema validator (~80 lines) covering exactly the keywords `schemas.ts` uses. | Every tool call — from the internal loop *or* MCP — is validated in `DebugTools.dispatch` before touching the debugger; malformed input becomes a precise, correctable error message instead of a crash or a silent clamp. |
+| `agent/history.ts` | `compactHistory` / `estimateChars` — stubs out tool results older than the last 6, never touching errors or `propose_code_fix`/`finish` outcomes. | Long runs accumulate step snapshots the model no longer needs; batch pruning above a high threshold trades one cache invalidation for a much smaller prompt. |
+| `agent/AgentState.ts` | Shared observable state: run status, narrative log, tool-event timeline, token usage, MCP status. | One EventEmitter feeds the sidebar; the loop and the MCP server both publish into it. |
+| `mcp/server.ts` | `McpDebugServer` — stateless Streamable-HTTP MCP server (`@modelcontextprotocol/sdk`) on a plain `node:http` listener bound to `127.0.0.1`. | Exposes `MCP_TOOLS` (everything except `finish`, plus `get_debugger_state`). Fresh Server+transport per POST; optional bearer-token auth; DNS-rebinding protection; results capped at 20k chars. Stop events are delivered through blocking tool results, so no notification stream is needed. |
+| `gui/SidebarProvider.ts` | Webview sidebar: chat composer, MCP toggle chip, unified activity rail (tool trace lines + reasoning cards), token/budget readout. | Assets live in `media/`; nonce'd CSP; renders purely from `AgentState` so a webview reload restores everything. |
+| `orchestrator/debug-agent.ts` | The user-facing entry point. Takes the bug description from the sidebar chat (or an InputBox), hands it to `runAgent`, ensures the debug session is stopped in `finally`. Enforces one run at a time. | Lifecycle ownership in one place. Failures during the run never leave a dangling debug session. |
+| `orchestrator/diff.ts` | `showPreviewAndConfirm`: opens a `vscode.diff` against an in-memory preview document, then a **modal** dialog. Applies via a single `WorkspaceEdit`, guarded by a document-version check (file changed while reviewing → auto-reject with explanation). Closes the preview tab on both paths. | Modal (not toast) — the agent loop blocks on the await. The result (with reason) is fed back so the model can react to a rejection. |
 
 ---
 
@@ -109,8 +119,13 @@ These are properties of the implementation, not just the prompt.
 | Agent cannot read arbitrary host files | `read_source` rejects any path outside an open workspace folder. Path is `path.resolve`'d first; check is `target === root \|\| target.startsWith(root + sep)`. |
 | Agent cannot mutate source without consent | `propose_code_fix` always routes through the modal `showPreviewAndConfirm` dialog. The boolean result is fed back so the model can react to a rejection. |
 | Off-by-one cannot delete unintended lines | `propose_code_fix` schema is documented as 1-indexed; `DebugTools.proposeFix` subtracts 1 before constructing `vscode.Position`. (Earlier bug fixed: lines were being applied at line N+1.) |
+| Hallucinated line numbers cannot edit the wrong region | `proposeFix` validates every change against the real file: `1 ≤ start_line ≤ end_line ≤ lineCount`, columns clamped to line lengths, overlapping ranges rejected — all before any UI is shown. |
+| Malformed tool input cannot crash or misfire | `validate.ts` checks every call against its JSON Schema in `DebugTools.dispatch`; failures return a named, per-field error the model can correct. |
 | Secrets never touch source or workspace | Only `vscode.SecretStorage` via `secrets.ts`. No `.env` reads, no settings.json. |
-| Stuck loops cannot run forever | `MAX_TURNS = 25` hard cap; user `CancellationToken` → `AbortSignal` aborts in-flight HTTP. |
+| Stuck loops cannot run forever | Configurable `maxTurns` (25) **and** token budget (200k) caps; either triggers a one-turn wrap-up nudge then a hard stop. User `CancellationToken` → `AbortSignal` aborts in-flight HTTP. |
+| Rate limits cannot kill a run | Anthropic: SDK retries (maxRetries 4) plus a retry-after-honoring outer layer for 429/5xx/connection errors. OpenAI-compat: backoff retries on 400-validator, 429 and 5xx. |
+| The MCP server cannot be reached from the network | Binds `127.0.0.1` only; optional bearer token; Host allow-list (DNS-rebinding protection). External clients get the same validated, user-gated tool surface — including the modal diff. |
+| Concurrent callers cannot corrupt debugger state | `DebugTools.dispatch` serializes all tool executions behind a mutex shared by the internal agent and the MCP server; every raw DAP request also carries a 10s hard timeout so a mute adapter cannot wedge the queue. |
 | Dangling debug sessions cannot leak | `debug-agent.ts` finally-block calls `stopDebugger()` if `controller.session` is still alive. |
 | Weak models that emit tool args as text cannot silently drop fixes | Two-stage recovery: (1) `recoverToolCallFromText` parses JSON-in-text and synthesizes a real `tool_use`; (2) `looksLikeFixIntent` detects markdown/diff fix descriptions and nudges the model with a corrective user message (cap 2). |
 | Provider-side validator failures cannot kill the loop | `OpenAICompatClient.callWithRetry` retries once on 400 with 400 ms backoff and surfaces `failed_generation` to the dev console. |
@@ -123,10 +138,11 @@ Every tool has a real JSON Schema in `agent/schemas.ts` (`required`, types, desc
 
 - **Source visibility:** `read_source` (workspace-scoped, line-numbered, range-able)
 - **Breakpoints:** `add_breakpoint` (with `condition`), `remove_breakpoint`, `list_breakpoints`
-- **Session lifecycle:** `start_debug_session`, `restart_debug_session`, `stop_debug_session`
-- **Stepping:** `continue_execution`, `step_over`, `step_into`, `step_out` — each returns the new stop reason + top frame + variables snapshot in one round-trip
+- **Session lifecycle:** `start_debug_session` (by launch-config name), `restart_debug_session`, `stop_debug_session`
+- **Stepping:** `continue_execution`, `step_over`, `step_into`, `step_out` — each returns the new stop reason + top frame + a small locals preview in one round-trip (`include_variables: true` for the full snapshot)
 - **State inspection:** `get_stack_trace`, `inspect_variables` (frame_index resolved → frameId), `expand_variable` (drill into nested by `variables_reference`)
-- **Output:** `propose_code_fix` (modal diff), `finish` (terminate with summary)
+- **Orientation (MCP only):** `get_debugger_state` — session active/paused, last stop, breakpoints, launch configs
+- **Output:** `propose_code_fix` (modal diff), `finish` (internal loop only; terminate with summary)
 
 What the agent cannot do: evaluate expressions, write to source without confirmation, read outside the workspace, run shell commands, hit the network from inside the debuggee.
 
@@ -134,10 +150,10 @@ What the agent cannot do: evaluate expressions, write to source without confirma
 
 ## 8. Intentionally deferred
 
-- **MCP server mode.** The `DebugTools` interface is the seam an MCP server would attach to (stdio transport, `debug://*` resources, `notifications/stopped`). Not built — out of scope for the current API-token path.
+- **MCP notifications stream.** Stop events are delivered via blocking tool results (steps return the stop). A stateful GET/SSE stream with `notifications/stopped` is only worth adding if clients want *unsolicited* events.
 - **Critique LLM.** The original diagram had one. Deferred until evidence the actor underperforms; doubling cost/latency on every turn isn't worth it yet.
 - **Conditional/function/data breakpoint variants.** Only conditional source breakpoints are exposed today (`add_breakpoint.condition`). Adding others is a schema-only change.
-- **Context compaction.** `MAX_TURNS=25` and bounded tool results (8 KB) keep the window in check today. A summarize-and-replace step is the next defense if longer sessions are needed.
+- **`evaluate_expression`.** Deliberately excluded (safety invariant). If ever added, it must sit behind an off-by-default setting.
 
 ---
 
@@ -145,22 +161,34 @@ What the agent cannot do: evaluate expressions, write to source without confirma
 
 ```
 src/
-  extension.ts                       commands + activation
-  command-interface.ts               DAP primitives
+  extension.ts                       commands + activation + MCP lifecycle
+  command-interface.ts               DAP primitives (10s request timeout, explicit thread/session targeting)
   agent/
-    schemas.ts                       tool definitions (JSON Schema)
+    schemas.ts                       tool definitions (JSON Schema) + AGENT_TOOLS / MCP_TOOLS splits
     systemPrompt.ts                  debugging persona
-    DebugTools.ts                    tool dispatcher
+    DebugTools.ts                    tool dispatcher (validation, mutex, bounds checks)
+    validate.ts                      minimal JSON-Schema validator
+    history.ts                       conversation compaction
     secrets.ts                       provider wizard + SecretStorage
-    AnthropicAgent.ts                runAgent loop (provider-agnostic)
+    AgentState.ts                    shared observable state (status, timeline, usage, MCP)
+    agentLoop.ts                     runAgent loop (provider-agnostic)
     llm/
-      types.ts                       LLMClient + Normalized* types
-      anthropic.ts                   AnthropicClient
+      types.ts                       LLMClient + Normalized* types + usage
+      anthropic.ts                   AnthropicClient (+ retry-after backoff)
       openaiCompat.ts                OpenAICompatClient (+ sanitizers, retry)
       index.ts                       createClient + presets
   session/
-    DebugSessionController.ts        DAP event tracker, waitForStop
+    DebugSessionController.ts        DAP event tracker, waitForStop, stopSeq, paused, dapSession
+  mcp/
+    server.ts                        Streamable-HTTP MCP server (stateless, 127.0.0.1, bearer auth)
+  gui/
+    SidebarProvider.ts               webview host (assets in media/)
   orchestrator/
-    debug-agent.ts                   user-facing entry point
-    diff.ts                          modal preview + confirm
+    debug-agent.ts                   user-facing entry point (single-run guard)
+    diff.ts                          preview provider + modal confirm + versioned apply
+  test/
+    unit/                            validator, compaction, recovery
+    integration/                     real js-debug sessions + MCP e2e (fixture workspace)
+media/                               sidebar.css / sidebar.js
+test-fixtures/                       buggy sample programs + launch.json
 ```

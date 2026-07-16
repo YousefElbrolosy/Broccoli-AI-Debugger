@@ -95,37 +95,57 @@ export class OpenAICompatClient implements LLMClient {
                 ? 'max_tokens'
                 : 'other';
 
-        return { text, toolCalls, stopReason };
+        const usage = resp.usage
+            ? {
+                  inputTokens: resp.usage.prompt_tokens ?? 0,
+                  outputTokens: resp.usage.completion_tokens ?? 0,
+                  cacheReadTokens: resp.usage.prompt_tokens_details?.cached_tokens ?? 0,
+                  cacheWriteTokens: 0
+              }
+            : undefined;
+
+        return { text, toolCalls, stopReason, usage };
     }
 
     /**
-     * Retry once on 400 "Failed to call a function" — these are sampling-time
-     * tool-call validation failures from providers like Groq and are usually
-     * transient. Re-extract `failed_generation` for diagnostics.
+     * Retry on transient failures:
+     *  - 400 "Failed to call a function" — sampling-time tool-call validation
+     *    failures from providers like Groq; usually transient. Re-extract
+     *    `failed_generation` for diagnostics.
+     *  - 429 / 5xx / connection errors — rate limits and overloads, retried
+     *    with exponential backoff.
      */
     private async callWithRetry(
         params: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
         signal: AbortSignal
     ): Promise<OpenAI.Chat.ChatCompletion> {
-        const maxAttempts = 2;
+        const maxAttempts = 3;
         let lastErr: unknown;
         for (let i = 0; i < maxAttempts; i++) {
             try {
                 return await this.client.chat.completions.create(params, { signal });
             } catch (e: any) {
                 lastErr = e;
-                const status: number | undefined = e?.status;
                 if (signal.aborted) { throw e; }
-                if (status !== 400) { throw e; }
-                const failed =
-                    e?.error?.failed_generation ??
-                    e?.response?.data?.error?.failed_generation;
-                if (failed) {
-                    // Surface the bad output so the user can see why validation failed.
-                    console.error('[broccoli] failed_generation:', failed);
+                const status: number | undefined = e?.status;
+                const transient =
+                    status === 429 ||
+                    (status !== undefined && status >= 500) ||
+                    e instanceof OpenAI.APIConnectionError;
+                if (status === 400) {
+                    const failed =
+                        e?.error?.failed_generation ??
+                        e?.response?.data?.error?.failed_generation;
+                    if (failed) {
+                        // Surface the bad output so the user can see why validation failed.
+                        console.error('[broccoli] failed_generation:', failed);
+                    }
+                } else if (!transient) {
+                    throw e;
                 }
                 if (i === maxAttempts - 1) { break; }
-                await new Promise(r => setTimeout(r, 400 * (i + 1)));
+                const backoff = status === 400 ? 400 * (i + 1) : 1000 * 2 ** i + Math.random() * 500;
+                await new Promise(r => setTimeout(r, backoff));
             }
         }
         throw lastErr;
@@ -155,8 +175,9 @@ function sanitizeSchema(schema: any): any {
  * turn. Recover by extracting the real name and parsing args from the parens.
  * If the result is still not in the known tool set, prefix with "INVALID__"
  * so the local dispatcher returns a clean error instead of the API rejecting.
+ * Exported for unit tests.
  */
-function sanitizeCall(
+export function sanitizeCall(
     rawName: string,
     rawArgs: string | undefined,
     known: Set<string>

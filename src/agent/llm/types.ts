@@ -15,6 +15,8 @@ export type ToolSchema = {
     description: string;
     /** JSON Schema for the tool input. */
     input_schema: object;
+    /** Exposed only over the MCP server, not to the built-in agent loop. */
+    mcpOnly?: boolean;
 };
 
 export type NormalizedToolCall = {
@@ -41,10 +43,19 @@ export type NormalizedMessage =
 
 export type StopReason = 'tool_use' | 'end_turn' | 'max_tokens' | 'other';
 
+/** Token usage for a single request, as reported by the provider. */
+export interface LLMUsage {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+}
+
 export interface LLMResponse {
     text?: string;
     toolCalls: NormalizedToolCall[];
     stopReason: StopReason;
+    usage?: LLMUsage;
 }
 
 export interface LLMClient {

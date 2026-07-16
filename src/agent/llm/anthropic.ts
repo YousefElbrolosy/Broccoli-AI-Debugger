@@ -17,7 +17,9 @@ export class AnthropicClient implements LLMClient {
     private readonly client: Anthropic;
 
     constructor(private readonly cfg: { apiKey: string; model: string }) {
-        this.client = new Anthropic({ apiKey: cfg.apiKey });
+        // The SDK retries 408/429/5xx with backoff on its own; raise the cap so
+        // a brief rate-limit or overload doesn't abort a long agent run.
+        this.client = new Anthropic({ apiKey: cfg.apiKey, maxRetries: 4 });
         this.label = `anthropic/${cfg.model}`;
     }
 
@@ -38,7 +40,7 @@ export class AnthropicClient implements LLMClient {
 
         const messages: Anthropic.MessageParam[] = toAnthropicMessages(args.messages);
 
-        const resp = await this.client.messages.create(
+        const resp = await this.createWithRetry(
             {
                 model: this.cfg.model,
                 max_tokens: args.maxTokens ?? 4096,
@@ -52,7 +54,7 @@ export class AnthropicClient implements LLMClient {
                 tools,
                 messages
             },
-            { signal: args.signal }
+            args.signal
         );
 
         let text: string | undefined;
@@ -74,8 +76,76 @@ export class AnthropicClient implements LLMClient {
                 ? 'max_tokens'
                 : 'other';
 
-        return { text, toolCalls, stopReason };
+        return {
+            text,
+            toolCalls,
+            stopReason,
+            usage: {
+                inputTokens: resp.usage.input_tokens,
+                outputTokens: resp.usage.output_tokens,
+                cacheReadTokens: resp.usage.cache_read_input_tokens ?? 0,
+                cacheWriteTokens: resp.usage.cache_creation_input_tokens ?? 0
+            }
+        };
     }
+
+    /**
+     * A second retry layer on top of the SDK's own: when the SDK exhausts its
+     * retries on a rate limit / overload / transient connection failure, wait
+     * (honoring retry-after when present) and try the whole call again.
+     */
+    private async createWithRetry(
+        params: Anthropic.MessageCreateParamsNonStreaming,
+        signal: AbortSignal
+    ): Promise<Anthropic.Message> {
+        const extraAttempts = 2;
+        let lastErr: unknown;
+        for (let attempt = 0; attempt <= extraAttempts; attempt++) {
+            try {
+                return await this.client.messages.create(params, { signal });
+            } catch (e) {
+                lastErr = e;
+                if (signal.aborted || attempt === extraAttempts || !isRetryable(e)) {
+                    throw e;
+                }
+                await sleep(retryDelayMs(e, attempt), signal);
+            }
+        }
+        throw lastErr;
+    }
+}
+
+function isRetryable(e: unknown): boolean {
+    return (
+        e instanceof Anthropic.RateLimitError ||
+        e instanceof Anthropic.InternalServerError ||
+        e instanceof Anthropic.APIConnectionError
+    );
+}
+
+function retryDelayMs(e: unknown, attempt: number): number {
+    if (e instanceof Anthropic.APIError) {
+        const retryAfter = Number(e.headers?.get?.('retry-after'));
+        if (Number.isFinite(retryAfter) && retryAfter > 0) {
+            return Math.min(retryAfter * 1000, 60_000);
+        }
+    }
+    // 1s, 2s (then 4s if attempts were raised), plus jitter.
+    return 1000 * 2 ** attempt + Math.random() * 500;
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, ms);
+        signal.addEventListener(
+            'abort',
+            () => {
+                clearTimeout(timer);
+                reject(new Error('Aborted'));
+            },
+            { once: true }
+        );
+    });
 }
 
 function toAnthropicMessages(msgs: NormalizedMessage[]): Anthropic.MessageParam[] {

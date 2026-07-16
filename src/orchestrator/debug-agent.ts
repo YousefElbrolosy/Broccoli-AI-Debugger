@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import { runAgent } from '../agent/AnthropicAgent';
+import { runAgent } from '../agent/agentLoop';
 import { configureProvider, getProviderConfig } from '../agent/secrets';
 import type { DebugSessionController } from '../session/DebugSessionController';
-import { stopDebugger } from '../command-interface';
 import type { AgentState } from '../agent/AgentState';
+import type { DebugTools } from '../agent/DebugTools';
 
 interface DebugContext {
     errorMessage: string;
@@ -12,11 +12,38 @@ interface DebugContext {
     codeSnippet?: string;
 }
 
+/** The single in-flight agent run, if any. Enforces one run at a time. */
+let activeRun: { cts: vscode.CancellationTokenSource } | undefined;
+let outputChannel: vscode.OutputChannel | undefined;
+
+export function isAgentRunning(): boolean {
+    return activeRun !== undefined;
+}
+
+/** Cancel the in-flight run. Returns false when no agent is running. */
+export function cancelActiveAgent(): boolean {
+    if (!activeRun) {
+        return false;
+    }
+    activeRun.cts.cancel();
+    return true;
+}
+
 export async function startDebugAgent(
     extContext: vscode.ExtensionContext,
     controller: DebugSessionController,
-    state: AgentState
+    state: AgentState,
+    debugTools?: DebugTools,
+    /** Bug description supplied by the sidebar chat input; skips the InputBox. */
+    presetDescription?: string
 ): Promise<void> {
+    if (activeRun) {
+        vscode.window.showWarningMessage(
+            'A Broccoli agent run is already in progress. Cancel it before starting another.'
+        );
+        return;
+    }
+
     let config = await getProviderConfig(extContext);
     if (!config) {
         const choice = await vscode.window.showInformationMessage(
@@ -30,21 +57,19 @@ export async function startDebugAgent(
         config = fresh;
     }
 
-    const debugContext = await collectContext();
+    const debugContext = await collectContext(presetDescription);
     if (!debugContext) { return; }
 
     state.clearNarrative();
 
-    const output = vscode.window.createOutputChannel('Broccoli Debug Agent');
+    outputChannel ??= vscode.window.createOutputChannel('Broccoli Debug Agent');
+    const output = outputChannel;
     output.show(true);
 
     const initialMessage = buildInitialMessage(debugContext);
 
     const cts = new vscode.CancellationTokenSource();
-    const cancelDisposable = vscode.commands.registerCommand(
-        'project-broccoli.cancelAgent',
-        () => cts.cancel()
-    );
+    activeRun = { cts };
 
     try {
         const result = await runAgent({
@@ -53,7 +78,8 @@ export async function startDebugAgent(
             initialUserMessage: initialMessage,
             output,
             cancel: cts.token,
-            state
+            state,
+            debugTools
         });
         output.appendLine(
             `\n=== Agent done — turns=${result.turns}, finished=${result.finished} ===`
@@ -74,11 +100,12 @@ export async function startDebugAgent(
         state.append({ kind: 'error', text: msg, turn: 0 });
         state.set({ kind: 'done', finished: false, turns: 0, summary: msg });
     } finally {
-        cancelDisposable.dispose();
+        activeRun = undefined;
         cts.dispose();
-        if (controller.session) {
+        const session = controller.session;
+        if (session) {
             try {
-                stopDebugger();
+                await vscode.debug.stopDebugging(session);
                 output.appendLine('Stopped debug session.');
             } catch (e) {
                 output.appendLine(
@@ -89,18 +116,25 @@ export async function startDebugAgent(
     }
 }
 
-async function collectContext(): Promise<DebugContext | undefined> {
-    const errorMessage = await vscode.window.showInputBox({
-        prompt: 'Describe the bug or paste the error',
-        placeHolder: "e.g. TypeError: Cannot read property 'x' of undefined",
-        ignoreFocusOut: true
-    });
+async function collectContext(presetDescription?: string): Promise<DebugContext | undefined> {
+    const errorMessage =
+        presetDescription?.trim() ||
+        (await vscode.window.showInputBox({
+            prompt: 'Describe the bug or paste the error',
+            placeHolder: "e.g. TypeError: Cannot read property 'x' of undefined",
+            ignoreFocusOut: true
+        }));
     if (!errorMessage) { return undefined; }
 
+    // Attach context from the active editor when there is one; the agent can
+    // always read_source its way to the code otherwise.
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
-        vscode.window.showErrorMessage('Open the file containing the suspected bug first.');
-        return undefined;
+        if (!presetDescription) {
+            vscode.window.showErrorMessage('Open the file containing the suspected bug first.');
+            return undefined;
+        }
+        return { errorMessage, filePath: '' };
     }
     const filePath = editor.document.uri.fsPath;
     const lineNumber = editor.selection.active.line + 1;
@@ -113,10 +147,10 @@ async function collectContext(): Promise<DebugContext | undefined> {
 }
 
 function buildInitialMessage(ctx: DebugContext): string {
-    const parts = [
-        `Bug report: ${ctx.errorMessage}`,
-        `File: ${ctx.filePath}${ctx.lineNumber ? `:${ctx.lineNumber}` : ''}`
-    ];
+    const parts = [`Bug report: ${ctx.errorMessage}`];
+    if (ctx.filePath) {
+        parts.push(`File: ${ctx.filePath}${ctx.lineNumber ? `:${ctx.lineNumber}` : ''}`);
+    }
     if (ctx.codeSnippet) {
         parts.push('Code context (around the cursor):');
         parts.push('```');

@@ -49,22 +49,34 @@ export class DebugSessionController implements vscode.Disposable {
     private disposables: vscode.Disposable[] = [];
     private waiters: Waiter[] = [];
     private lastStop: StopEvent | undefined;
+    private seq = 0;
+
+    private _paused = false;
+    private lastStopSession: vscode.DebugSession | undefined;
 
     constructor() {
         const trackerFactory: vscode.DebugAdapterTrackerFactory = {
-            createDebugAdapterTracker: () => ({
-                onDidSendMessage: (msg: any) => this.onDapMessage(msg)
+            createDebugAdapterTracker: (session: vscode.DebugSession) => ({
+                onDidSendMessage: (msg: any) => this.onDapMessage(session, msg),
+                onWillReceiveMessage: (msg: any) => this.onDapRequest(msg)
             })
         };
         // '*' subscribes to every debug type
         this.disposables.push(
             vscode.debug.registerDebugAdapterTrackerFactory('*', trackerFactory),
-            vscode.debug.onDidTerminateDebugSession(() => this.fanOut({ reason: 'terminated' }))
+            vscode.debug.onDidTerminateDebugSession(session => {
+                this._paused = false;
+                if (this.lastStopSession === session) {
+                    this.lastStopSession = undefined;
+                }
+                this.fanOut({ reason: 'terminated' });
+            })
         );
     }
 
-    private onDapMessage(msg: any) {
-        if (msg?.type === 'event' && msg.event === 'stopped') {
+    private onDapMessage(session: vscode.DebugSession, msg: any) {
+        if (msg?.type !== 'event') { return; }
+        if (msg.event === 'stopped') {
             const body = msg.body ?? {};
             const evt: StopEvent = {
                 reason: (body.reason ?? 'unknown') as StopReason,
@@ -74,7 +86,23 @@ export class DebugSessionController implements vscode.Disposable {
                 allThreadsStopped: body.allThreadsStopped
             };
             this.lastStop = evt;
+            this.lastStopSession = session;
+            this.seq++;
+            this._paused = true;
             this.fanOut(evt);
+        } else if (msg.event === 'continued') {
+            this._paused = false;
+        }
+    }
+
+    private onDapRequest(msg: any) {
+        // Requests VS Code sends to the adapter: a resume request means we're
+        // no longer paused (some adapters don't emit `continued` events).
+        if (
+            msg?.type === 'request' &&
+            ['continue', 'next', 'stepIn', 'stepOut', 'restart'].includes(msg.command)
+        ) {
+            this._paused = false;
         }
     }
 
@@ -91,6 +119,16 @@ export class DebugSessionController implements vscode.Disposable {
         return vscode.debug.activeDebugSession;
     }
 
+    /**
+     * The session DAP requests should target. js-debug (and other compound
+     * adapters) run a parent session that does not answer requests like
+     * `stackTrace` — prefer the session that actually emitted the last
+     * `stopped` event over whatever VS Code considers "active".
+     */
+    public get dapSession(): vscode.DebugSession | undefined {
+        return this.lastStopSession ?? vscode.debug.activeDebugSession;
+    }
+
     public get topFrameId(): number | undefined {
         const s = vscode.debug.activeStackItem;
         if (s && 'frameId' in s) {
@@ -101,6 +139,16 @@ export class DebugSessionController implements vscode.Disposable {
 
     public get lastStopEvent(): StopEvent | undefined {
         return this.lastStop;
+    }
+
+    /** Monotonic counter of `stopped` events; lets callers detect a stop that landed after their waiter timed out. */
+    public get stopSeq(): number {
+        return this.seq;
+    }
+
+    /** Best-effort "is the debuggee paused" derived from DAP traffic. */
+    public get paused(): boolean {
+        return this._paused && !!vscode.debug.activeDebugSession;
     }
 
     /**

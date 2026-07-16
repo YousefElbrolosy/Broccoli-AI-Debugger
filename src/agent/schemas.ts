@@ -16,14 +16,24 @@ export type ToolName =
     | 'restart_debug_session'
     | 'stop_debug_session'
     | 'propose_code_fix'
+    | 'get_debugger_state'
     | 'finish';
 
 export const TOOLS: ToolSchema[] = [
     {
         name: 'start_debug_session',
         description:
-            'Start a VS Code debug session using the workspace launch.json. Use only when no session is active. Returns session metadata once attached.',
-        input_schema: { type: 'object', properties: {} }
+            'Start a VS Code debug session using the workspace launch.json. Use only when no session is active. Returns session metadata once attached; on failure it lists the available configuration names.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                configuration: {
+                    type: 'string',
+                    description:
+                        'Name of the launch.json configuration to start. Required when more than one exists (otherwise the user is prompted to pick).'
+                }
+            }
+        }
     },
     {
         name: 'add_breakpoint',
@@ -62,42 +72,52 @@ export const TOOLS: ToolSchema[] = [
     {
         name: 'continue_execution',
         description:
-            'Resume execution. Returns the next stop reason ("breakpoint" | "step" | "exception" | "terminated") and the new top frame, if any. Blocks up to a timeout.',
+            'Resume execution. Returns the next stop reason ("breakpoint" | "step" | "exception" | "terminated"), the new top frame, and a short preview of local variables. Set include_variables=true for a full snapshot, or call inspect_variables. Blocks up to a timeout.',
         input_schema: {
             type: 'object',
             properties: {
-                timeout_ms: { type: 'integer', minimum: 100, default: 15000 }
+                timeout_ms: { type: 'integer', minimum: 100, default: 15000 },
+                include_variables: {
+                    type: 'boolean',
+                    default: false,
+                    description: 'Include a full variable snapshot of the top frame in the result.'
+                }
             }
         }
     },
     {
         name: 'step_over',
         description:
-            'Step over the current line. Returns the next stop reason and top frame.',
+            'Step over the current line. Returns the next stop reason, top frame, and a short locals preview (set include_variables=true for a full snapshot).',
         input_schema: {
             type: 'object',
             properties: {
-                timeout_ms: { type: 'integer', minimum: 100, default: 5000 }
+                timeout_ms: { type: 'integer', minimum: 100, default: 5000 },
+                include_variables: { type: 'boolean', default: false }
             }
         }
     },
     {
         name: 'step_into',
-        description: 'Step into the function call on the current line.',
+        description:
+            'Step into the function call on the current line. Returns the next stop reason, top frame, and a short locals preview (set include_variables=true for a full snapshot).',
         input_schema: {
             type: 'object',
             properties: {
-                timeout_ms: { type: 'integer', minimum: 100, default: 5000 }
+                timeout_ms: { type: 'integer', minimum: 100, default: 5000 },
+                include_variables: { type: 'boolean', default: false }
             }
         }
     },
     {
         name: 'step_out',
-        description: 'Step out of the current function.',
+        description:
+            'Step out of the current function. Returns the next stop reason, top frame, and a short locals preview (set include_variables=true for a full snapshot).',
         input_schema: {
             type: 'object',
             properties: {
-                timeout_ms: { type: 'integer', minimum: 100, default: 5000 }
+                timeout_ms: { type: 'integer', minimum: 100, default: 5000 },
+                include_variables: { type: 'boolean', default: false }
             }
         }
     },
@@ -209,6 +229,13 @@ export const TOOLS: ToolSchema[] = [
         }
     },
     {
+        name: 'get_debugger_state',
+        description:
+            'Cheap orientation call: reports whether a debug session is active and paused, the last stop event, and all current breakpoints. Call this first when you do not know the debugger state.',
+        input_schema: { type: 'object', properties: {} },
+        mcpOnly: true
+    },
+    {
         name: 'finish',
         description:
             'End the debug session and return a final summary. Call this when a fix has been proposed, when no progress can be made, or when the user goal is met.',
@@ -221,3 +248,9 @@ export const TOOLS: ToolSchema[] = [
         }
     }
 ];
+
+/** Tools shown to the built-in agent loop. */
+export const AGENT_TOOLS: ToolSchema[] = TOOLS.filter(t => !t.mcpOnly);
+
+/** Tools exposed over the MCP server: everything except `finish` (an agent-loop control signal, meaningless to external clients). */
+export const MCP_TOOLS: ToolSchema[] = TOOLS.filter(t => t.name !== 'finish');
