@@ -1,4 +1,5 @@
 .vscode/**
+.claude/**
 .vscode-test/**
 src/**
 .gitignore
@@ -16,4 +17,3 @@ out-test/**
 test-fixtures/**
 *.vsix
 tsconfig.test.json
-CHANGELOG.md
