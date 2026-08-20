@@ -1,0 +1,428 @@
+/* Project Broccoli sidebar.
+   Native-first: every color derives from VS Code theme tokens; the brand green
+   only marks life (MCP up, run finished, tool ok). The signature element is the
+   activity rail — tool calls as mono trace lines, thoughts as indented cards,
+   one chronological feed. */
+
+:root {
+    color-scheme: light dark;
+    --b-green: var(--vscode-charts-green, #6a9955);
+    --b-red: var(--vscode-errorForeground, #c0392b);
+    --b-amber: var(--vscode-charts-yellow, #b89200);
+    --b-dim: var(--vscode-descriptionForeground);
+    --b-border: var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+    --b-mono: var(--vscode-editor-font-family, ui-monospace, monospace);
+}
+
+html,
+body {
+    height: 100%;
+}
+
+body {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size, 13px);
+    color: var(--vscode-foreground);
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+button {
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 2px;
+}
+
+button:focus-visible,
+textarea:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+/* ---------- header ---------- */
+
+header {
+    padding: 10px 12px 8px;
+    border-bottom: 1px solid var(--b-border);
+}
+
+.brand-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.wordmark {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.wordmark .leaf {
+    color: var(--b-green);
+    margin-right: 4px;
+}
+
+.mcp-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--b-mono);
+    font-size: 10px;
+    color: var(--b-dim);
+    background: transparent;
+    border: 1px solid var(--b-border);
+    padding: 2px 7px;
+    border-radius: 9px;
+}
+
+.mcp-chip:hover {
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+}
+
+.dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--b-dim);
+    opacity: 0.5;
+    flex: none;
+}
+
+.mcp-chip.up .dot {
+    background: var(--b-green);
+    opacity: 1;
+}
+
+.mcp-chip.up {
+    color: var(--vscode-foreground);
+}
+
+.provider-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 7px;
+}
+
+.provider-label {
+    font-family: var(--b-mono);
+    font-size: 11px;
+    color: var(--b-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.provider-label.configured {
+    color: var(--vscode-foreground);
+}
+
+.link-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 11px;
+    color: var(--vscode-textLink-foreground);
+    flex: none;
+}
+
+.link-btn:hover {
+    text-decoration: underline;
+}
+
+/* ---------- composer ---------- */
+
+.composer {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--b-border);
+}
+
+.composer textarea {
+    width: 100%;
+    box-sizing: border-box;
+    resize: none;
+    min-height: 54px;
+    max-height: 140px;
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, var(--b-border));
+    border-radius: 2px;
+}
+
+.composer textarea::placeholder {
+    color: var(--vscode-input-placeholderForeground, var(--b-dim));
+}
+
+.composer textarea:disabled {
+    opacity: 0.5;
+}
+
+.composer .actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.btn {
+    flex: 1;
+    border: 1px solid var(--vscode-button-border, transparent);
+    padding: 5px 10px;
+    font-size: 12px;
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+}
+
+.btn:hover {
+    background: var(--vscode-button-hoverBackground);
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.btn.stop {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+}
+
+.btn.stop:hover {
+    background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.composer .hint {
+    font-size: 11px;
+    color: var(--b-dim);
+    margin-top: 6px;
+}
+
+/* ---------- run status ---------- */
+
+.status-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px 0;
+    font-size: 11px;
+    color: var(--b-dim);
+}
+
+.status-row .dot.run {
+    background: var(--b-amber);
+    opacity: 1;
+    animation: pulse 1.4s ease-in-out infinite;
+}
+
+.status-row .dot.ok {
+    background: var(--b-green);
+    opacity: 1;
+}
+
+.status-row .dot.fail {
+    background: var(--b-red);
+    opacity: 1;
+}
+
+@keyframes pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.35;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .status-row .dot.run {
+        animation: none;
+    }
+}
+
+/* ---------- activity rail (signature) ---------- */
+
+.feed {
+    flex: 1;
+    min-height: 60px;
+    overflow-y: auto;
+    padding: 6px 12px 10px 12px;
+}
+
+.rail {
+    position: relative;
+    padding-left: 14px;
+}
+
+.rail::before {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 4px;
+    bottom: 4px;
+    width: 1px;
+    background: var(--b-border);
+}
+
+.tool-line {
+    position: relative;
+    font-family: var(--b-mono);
+    font-size: 11px;
+    line-height: 1.7;
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+    white-space: nowrap;
+}
+
+.tool-line .glyph {
+    position: absolute;
+    left: -14px;
+    width: 9px;
+    text-align: center;
+    font-size: 10px;
+}
+
+.tool-line.ok .glyph {
+    color: var(--b-green);
+}
+
+.tool-line.error .glyph {
+    color: var(--b-red);
+}
+
+.tool-line.running .glyph {
+    color: var(--b-amber);
+}
+
+.tool-line .name {
+    flex: none;
+}
+
+.tool-line.error .name {
+    color: var(--b-red);
+}
+
+.tool-line .args {
+    color: var(--b-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
+}
+
+.tool-line .ms {
+    color: var(--b-dim);
+    font-size: 10px;
+    flex: none;
+}
+
+.card {
+    margin: 6px 0;
+    padding: 7px 9px;
+    border-radius: 3px;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-left: 2px solid var(--b-border);
+    background: var(--vscode-textBlockQuote-background, rgba(128, 128, 128, 0.08));
+}
+
+.card .tag {
+    display: block;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    color: var(--b-dim);
+    margin-bottom: 3px;
+}
+
+.card.thought {
+    border-left-color: var(--vscode-editorInfo-foreground, #3794ff);
+}
+
+.card.rationale {
+    border-left-color: var(--b-amber);
+}
+
+.card.summary {
+    border-left-color: var(--b-green);
+    background: var(--vscode-diffEditor-insertedTextBackground, rgba(106, 153, 85, 0.1));
+}
+
+.card.error {
+    border-left-color: var(--b-red);
+    background: var(--vscode-inputValidation-errorBackground, rgba(192, 57, 43, 0.1));
+}
+
+.turn-mark {
+    font-family: var(--b-mono);
+    font-size: 9px;
+    color: var(--b-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 8px 0 2px;
+}
+
+.empty-state {
+    color: var(--b-dim);
+    font-style: italic;
+    font-size: 12px;
+    padding: 10px 2px;
+}
+
+/* ---------- stats strip ---------- */
+
+.stats {
+    border-top: 1px solid var(--b-border);
+    padding: 6px 12px 8px;
+    font-family: var(--b-mono);
+    font-size: 10px;
+    color: var(--b-dim);
+}
+
+.stats .nums {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.budget {
+    margin-top: 5px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--b-border);
+    overflow: hidden;
+    display: none;
+}
+
+.budget.visible {
+    display: block;
+}
+
+.budget .fill {
+    height: 100%;
+    width: 0;
+    background: var(--b-green);
+    transition: width 0.3s ease;
+}
+
+.budget .fill.warn {
+    background: var(--b-amber);
+}
+
+.budget .fill.hot {
+    background: var(--b-red);
+}

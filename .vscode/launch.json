@@ -16,6 +16,17 @@
 				"${workspaceFolder}/out/**/*.js"
 			],
 			"preLaunchTask": "${defaultBuildTask}"
+		},
+		{
+			"name": "Integration Tests",
+			"type": "extensionHost",
+			"request": "launch",
+			"testConfiguration": "${workspaceFolder}/.vscode-test.mjs",
+			"testConfigurationLabel": "integration",
+			"outFiles": [
+				"${workspaceFolder}/out/**/*.js",
+				"${workspaceFolder}/out-test/**/*.js"
+			]
 		}
 	]
 }

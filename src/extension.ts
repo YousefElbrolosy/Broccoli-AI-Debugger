@@ -1,114 +1,146 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-import { startDebugger, continueExecution, stepOver, stepInto, stepOut, restartDebugger, stopDebugger, inspectVariables, testAddingBreakpoints, testRemovingBreakpoints } from './command-interface';
-import startDummyAgent from './orchestrator/dummy';
-import { showPreviewAndConfirm } from './orchestrator/diff';
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
+import {
+    addBreakpoint,
+    continueExecution,
+    getVariablesForFrame,
+    listBreakpoints,
+    removeBreakpoint,
+    restartDebugger,
+    startDebugger,
+    stepInto,
+    stepOut,
+    stepOver,
+    stopDebugger
+} from './command-interface';
+import { DebugSessionController } from './session/DebugSessionController';
+import { cancelActiveAgent, startDebugAgent } from './orchestrator/debug-agent';
+import { registerDiffPreviewProvider } from './orchestrator/diff';
+import { clearProviderConfig, configureProvider } from './agent/secrets';
+import { AgentState } from './agent/AgentState';
+import { DebugTools } from './agent/DebugTools';
+import { McpDebugServer } from './mcp/server';
+import { SidebarProvider } from './gui/SidebarProvider';
+
+let controller: DebugSessionController | undefined;
+let agentState: AgentState | undefined;
+let mcpServer: McpDebugServer | undefined;
+
 export function activate(context: vscode.ExtensionContext) {
+    controller = new DebugSessionController();
+    agentState = new AgentState();
+    context.subscriptions.push(controller, agentState);
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "project-broccoli" is now active!');
+    // One DebugTools shared by the built-in agent and the MCP server — its
+    // internal mutex serializes debugger operations across both surfaces.
+    const debugTools = new DebugTools(controller);
+    const mcpOutput = vscode.window.createOutputChannel('Broccoli MCP');
+    mcpServer = new McpDebugServer(debugTools, agentState, mcpOutput);
+    context.subscriptions.push(mcpServer, mcpOutput);
 
-	let pendingInspection: 'stepOver' | null = null;
+    const sidebar = new SidebarProvider(context, agentState, text => {
+        void startDebugAgent(context, controller!, agentState!, debugTools, text).catch(e => {
+            vscode.window.showErrorMessage(
+                `project-broccoli: ${e instanceof Error ? e.message : String(e)}`
+            );
+        });
+    });
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(SidebarProvider.viewId, sidebar)
+    );
+    registerDiffPreviewProvider(context);
 
-	const stackItemListener = vscode.debug.onDidChangeActiveStackItem(async (stackItem) => {
-		if (pendingInspection && stackItem && 'frameId' in stackItem) {
-			console.log(`Debugger stopped after ${pendingInspection}, inspecting variables...`);
-			pendingInspection = null;
+    const cmd = (id: string, fn: (...a: any[]) => any) =>
+        context.subscriptions.push(
+            vscode.commands.registerCommand(id, async (...args: any[]) => {
+                try {
+                    await fn(...args);
+                } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    vscode.window.showErrorMessage(`project-broccoli: ${msg}`);
+                }
+            })
+        );
 
-			await inspectVariables();
-		}
-	});
+    // Manual debug commands (operate on the active session; surface errors as toasts).
+    cmd('project-broccoli.startDebugger', () => startDebugger());
+    cmd('project-broccoli.continueExecution', () => continueExecution());
+    cmd('project-broccoli.stepOver', () => stepOver());
+    cmd('project-broccoli.stepInto', () => stepInto());
+    cmd('project-broccoli.stepOut', () => stepOut());
+    cmd('project-broccoli.restartDebugger', () => restartDebugger());
+    cmd('project-broccoli.stopDebugger', () => stopDebugger());
 
-	context.subscriptions.push(stackItemListener);
+    cmd('project-broccoli.inspectVariables', async () => {
+        const vars = await getVariablesForFrame();
+        const ch = vscode.window.createOutputChannel('Broccoli: Variables');
+        ch.show(true);
+        ch.appendLine(JSON.stringify(vars, null, 2));
+    });
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const startDebugCommand = vscode.commands.registerCommand('project-broccoli.startDebugger', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		startDebugger();
-	});
-	context.subscriptions.push(startDebugCommand);
+    cmd('project-broccoli.addBreakpointAtCursor', async () => {
+        const e = vscode.window.activeTextEditor;
+        if (!e) { throw new Error('No active editor'); }
+        await addBreakpoint(e.document.uri.fsPath, e.selection.active.line + 1);
+    });
 
-	const continueExecutionCommand = vscode.commands.registerCommand('project-broccoli.continueExecution', () => {
-		continueExecution();
-	});
+    cmd('project-broccoli.removeBreakpointAtCursor', async () => {
+        const e = vscode.window.activeTextEditor;
+        if (!e) { throw new Error('No active editor'); }
+        const removed = await removeBreakpoint(e.document.uri.fsPath, e.selection.active.line + 1);
+        if (!removed) {
+            vscode.window.showInformationMessage('No breakpoint at cursor.');
+        }
+    });
 
-	context.subscriptions.push(continueExecutionCommand);
+    cmd('project-broccoli.listBreakpoints', () => {
+        const ch = vscode.window.createOutputChannel('Broccoli: Breakpoints');
+        ch.show(true);
+        ch.appendLine(JSON.stringify(listBreakpoints(), null, 2));
+    });
 
-	const stepOverCommand = vscode.commands.registerCommand('project-broccoli.stepOver', async () => {
-		pendingInspection = 'stepOver';
-		stepOver();
-	});
+    // Agent commands.
+    cmd('project-broccoli.startDebugAgent', () =>
+        startDebugAgent(context, controller!, agentState!, debugTools)
+    );
+    cmd('project-broccoli.cancelAgent', () => {
+        if (!cancelActiveAgent()) {
+            vscode.window.showInformationMessage('No Broccoli agent is running.');
+        }
+    });
+    cmd('project-broccoli.configureProvider', () => configureProvider(context));
+    cmd('project-broccoli.clearProviderConfig', () => clearProviderConfig(context));
 
-	context.subscriptions.push(stepOverCommand);
+    // MCP server commands.
+    cmd('project-broccoli.startMcpServer', async () => {
+        await mcpServer!.start(mcpOptions());
+        vscode.window.showInformationMessage(
+            `Broccoli MCP server listening on http://127.0.0.1:${mcpOptions().port}/mcp`
+        );
+    });
+    cmd('project-broccoli.stopMcpServer', () => mcpServer!.stop());
 
-	const stepIntoCommand = vscode.commands.registerCommand('project-broccoli.stepInto', () => {
-		stepInto();
-	});
-
-	context.subscriptions.push(stepIntoCommand);
-
-	const stepOutCommand = vscode.commands.registerCommand('project-broccoli.stepOut', () => {
-		stepOut();
-	});
-
-	context.subscriptions.push(stepOutCommand);
-
-	const restartDebugCommand = vscode.commands.registerCommand('project-broccoli.restartDebugger', () => {
-		restartDebugger();
-	});
-
-	context.subscriptions.push(restartDebugCommand);
-
-	const stopDebugCommand = vscode.commands.registerCommand('project-broccoli.stopDebugger', () => {
-		stopDebugger();
-	});
-
-	context.subscriptions.push(stopDebugCommand);
-
-	const inspectVariablesCommand = vscode.commands.registerCommand('project-broccoli.inspectVariables', async () => {
-		inspectVariables();
-	});
-
-	context.subscriptions.push(inspectVariablesCommand);
-
-	const testAddingBreakpointsCommand = vscode.commands.registerCommand('project-broccoli.testAddingBreakpoints', () => {
-		testAddingBreakpoints();
-	});
-
-	context.subscriptions.push(testAddingBreakpointsCommand);
-
-	const testRemovingBreakpointsCommand = vscode.commands.registerCommand('project-broccoli.testRemovingBreakpoints', () => {
-		testRemovingBreakpoints();
-	});
-
-	context.subscriptions.push(testRemovingBreakpointsCommand);
-
-	const startDummyAgentCommand = vscode.commands.registerCommand('project-broccoli.startDummyAgent', async () => {
-		await startDummyAgent();
-	});
-
-	context.subscriptions.push(startDummyAgentCommand);
-
-	const testDiff = vscode.commands.registerCommand('project-broccoli.showDiff', async () => {
-		const activeEditor = vscode.window.activeTextEditor;
-		if (activeEditor) {
-			const filePath = activeEditor.document.uri.fsPath;
-			await showPreviewAndConfirm(filePath, [{range: new vscode.Range(new vscode.Position(0, 0), new vscode.Position(1, 0)), newText: '# Modified line example'},
-				{range: new vscode.Range(new vscode.Position(2, 0), new vscode.Position(2, 5)), newText: '# Changed'}]);
-		} else {
-			vscode.window.showInformationMessage('No active editor to show diff for');
-		}
-	});
-
-	context.subscriptions.push(testDiff);
+    if (vscode.workspace.getConfiguration('broccoli.mcp').get<boolean>('autoStart', false)) {
+        mcpServer.start(mcpOptions()).catch(e => {
+            vscode.window.showErrorMessage(
+                `Broccoli MCP server failed to start: ${e instanceof Error ? e.message : String(e)}`
+            );
+        });
+    }
 }
 
-// This method is called when your extension is deactivated
-export function deactivate() { }
+function mcpOptions() {
+    const cfg = vscode.workspace.getConfiguration('broccoli.mcp');
+    return {
+        port: cfg.get<number>('port', 4923),
+        authToken: cfg.get<string>('authToken', '')
+    };
+}
+
+export function deactivate() {
+    controller?.dispose();
+    controller = undefined;
+    agentState?.dispose();
+    agentState = undefined;
+    mcpServer?.dispose();
+    mcpServer = undefined;
+}

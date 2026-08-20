@@ -1,13 +1,30 @@
 {
   "name": "project-broccoli",
-  "displayName": "project-broccoli",
-  "description": "An AI debugger",
-  "version": "0.0.1",
+  "displayName": "Broccoli \u2014 AI Debugger",
+  "description": "An AI agent that drives VS Code's real debugger \u2014 breakpoints, stepping, variable inspection \u2014 and an MCP server so external agents (Claude Code, Cursor) can debug through your editor too.",
+  "version": "0.1.0",
+  "publisher": "YousefElbrolosy",
+  "license": "MIT",
+  "icon": "resources/broccoli-icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YousefElbrolosy/project-broccoli.git"
+  },
   "engines": {
     "vscode": "^1.106.1"
   },
   "categories": [
-    "Other"
+    "Debuggers",
+    "AI"
+  ],
+  "keywords": [
+    "debugger",
+    "ai",
+    "agent",
+    "mcp",
+    "model context protocol",
+    "claude",
+    "llm"
   ],
   "activationEvents": [],
   "main": "./out/extension.js",
@@ -15,53 +32,107 @@
     "commands": [
       {
         "command": "project-broccoli.startDebugger",
-        "title": "Start Debugger"
+        "title": "Broccoli: Start Debugger"
       },
       {
         "command": "project-broccoli.continueExecution",
-        "title": "Continue Execution"
+        "title": "Broccoli: Continue Execution"
       },
       {
         "command": "project-broccoli.stepOver",
-        "title": "Step Over"
+        "title": "Broccoli: Step Over"
       },
       {
         "command": "project-broccoli.stepInto",
-        "title": "Step Into"
+        "title": "Broccoli: Step Into"
       },
       {
         "command": "project-broccoli.stepOut",
-        "title": "Step Out"
+        "title": "Broccoli: Step Out"
       },
       {
         "command": "project-broccoli.restartDebugger",
-        "title": "Restart Debugger"
+        "title": "Broccoli: Restart Debugger"
       },
       {
         "command": "project-broccoli.stopDebugger",
-        "title": "Stop Debugger"
+        "title": "Broccoli: Stop Debugger"
       },
       {
         "command": "project-broccoli.inspectVariables",
-        "title": "Inspect Variables"
+        "title": "Broccoli: Inspect Variables"
       },
       {
-        "command": "project-broccoli.testAddingBreakpoints",
-        "title": "Add Breakpoints"
+        "command": "project-broccoli.addBreakpointAtCursor",
+        "title": "Broccoli: Add Breakpoint at Cursor"
       },
       {
-        "command": "project-broccoli.testRemovingBreakpoints",
-        "title": "Remove Breakpoints"
+        "command": "project-broccoli.removeBreakpointAtCursor",
+        "title": "Broccoli: Remove Breakpoint at Cursor"
       },
       {
-        "command": "project-broccoli.startDummyAgent",
-        "title": "Start Dummy Agent (test)"
+        "command": "project-broccoli.listBreakpoints",
+        "title": "Broccoli: List Breakpoints"
       },
       {
-        "command": "project-broccoli.showDiff",
-        "title": "Show Diff"
+        "command": "project-broccoli.startDebugAgent",
+        "title": "Broccoli: Start AI Debug Agent"
+      },
+      {
+        "command": "project-broccoli.cancelAgent",
+        "title": "Broccoli: Cancel Running Agent"
+      },
+      {
+        "command": "project-broccoli.configureProvider",
+        "title": "Broccoli: Configure LLM Provider"
+      },
+      {
+        "command": "project-broccoli.clearProviderConfig",
+        "title": "Broccoli: Clear LLM Provider Config"
+      },
+      {
+        "command": "project-broccoli.startMcpServer",
+        "title": "Broccoli: Start MCP Server"
+      },
+      {
+        "command": "project-broccoli.stopMcpServer",
+        "title": "Broccoli: Stop MCP Server"
       }
     ],
+    "configuration": {
+      "title": "Project Broccoli",
+      "properties": {
+        "broccoli.agent.maxTurns": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 1,
+          "description": "Maximum number of LLM turns per agent run."
+        },
+        "broccoli.agent.tokenBudget": {
+          "type": "integer",
+          "default": 200000,
+          "minimum": 0,
+          "description": "Total token budget (input + output + cache) per agent run. When exhausted the agent is asked to wrap up. 0 disables the budget."
+        },
+        "broccoli.mcp.port": {
+          "type": "integer",
+          "default": 4923,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Localhost port for the Broccoli MCP server."
+        },
+        "broccoli.mcp.authToken": {
+          "type": "string",
+          "default": "",
+          "description": "Optional bearer token required on every MCP request (Authorization: Bearer <token>). Empty disables auth. The server only ever binds to 127.0.0.1."
+        },
+        "broccoli.mcp.autoStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start the MCP server automatically when the extension activates."
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -75,23 +146,23 @@
       "project-broccoli": [
         {
           "id": "project-broccoli-view",
-          "name": "Welcome",
+          "name": "Project Broccoli",
+          "type": "webview",
           "icon": "resources/brocolli-icon.svg"
         }
       ]
-    },
-    "viewsWelcome": [
-      {
-        "view": "project-broccoli-view",
-        "contents": "[Start Dabro-cess](command:project-broccoli.startDebugger)"
-      }
-    ]
+    }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
+    "vscode:prepublish": "npm run package",
+    "check-types": "tsc -p ./",
+    "compile": "npm run check-types && node esbuild.mjs",
+    "package": "npm run check-types && npm run lint && node esbuild.mjs --production",
+    "vsix": "vsce package",
+    "vsix:ls": "vsce ls",
+    "watch": "node esbuild.mjs --watch",
+    "compile-tests": "tsc -p tsconfig.test.json",
+    "pretest": "npm run compile && npm run compile-tests && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test"
   },
@@ -102,11 +173,15 @@
     "@types/vscode": "^1.106.1",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
     "eslint": "^9.39.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.3"
   },
   "dependencies": {
-    "yarn": "^1.22.22"
+    "@anthropic-ai/sdk": "^0.95.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "openai": "^6.37.0"
   }
 }
